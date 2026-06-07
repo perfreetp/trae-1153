@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Star, Lock, Unlock, Download, Users, GitCompare } from 'lucide-react';
+import { Star, Lock, Unlock, Download, Users, GitCompare, FileText, TrendingUp } from 'lucide-react';
 import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Legend } from 'recharts';
 import html2canvas from 'html2canvas';
 import { useProjectStore, useUIStore } from '@/stores';
@@ -26,7 +26,9 @@ export default function ReviewPage() {
   const [compareB, setCompareB] = useState('');
   const [confirmLock, setConfirmLock] = useState(false);
   const [posterOpen, setPosterOpen] = useState(false);
+  const [scoreCardOpen, setScoreCardOpen] = useState(false);
   const posterRef = useRef<HTMLDivElement>(null);
+  const scoreCardRef = useRef<HTMLDivElement>(null);
 
   if (!currentProject || !currentVersion) {
     return <div className="flex items-center justify-center h-[60vh] text-smoke-light">请先选择一个项目</div>;
@@ -100,9 +102,67 @@ export default function ReviewPage() {
     addToast('海报已下载', 'success');
   };
 
+  const handleDownloadScoreCard = async () => {
+    if (!scoreCardRef.current) return;
+    const canvas = await html2canvas(scoreCardRef.current, { backgroundColor: '#0f0f1a' });
+    const link = document.createElement('a');
+    const date = new Date().toISOString().slice(0, 10);
+    link.download = `${currentProject.name}-评分卡-${date}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+    addToast('评分卡已下载', 'success');
+  };
+
+  const handleExportScoreCardHtml = () => {
+    const html = `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><title>${currentProject.name} 评分卡</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&display=swap');
+body{font-family:'Noto Serif SC',serif;max-width:600px;margin:0 auto;padding:32px;color:#1a1a2e;background:#f5f0e8;line-height:1.8;}
+h1{font-size:24px;text-align:center;border-bottom:3px double #b8860b;padding-bottom:12px;}
+.sub{text-align:center;color:#6a6a7a;font-size:13px;margin-bottom:24px;}
+.dim{margin:16px 0;padding:8px 0;border-bottom:1px dashed #d0c8b8;}
+.dim-name{font-weight:700;color:#c0392b;font-size:16px;}
+.dim-score{float:right;font-size:20px;font-weight:700;color:#b8860b;}
+.dim-bar{height:8px;background:#e8e0d0;border-radius:4px;margin-top:4px;}
+.dim-bar-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,#2d6a4f,#b8860b);}
+.total{text-align:center;font-size:28px;font-weight:700;color:#c0392b;margin:20px 0;}
+.footer{text-align:center;color:#6a6a7a;font-size:11px;margin-top:24px;}
+</style></head><body>
+<h1>${currentProject.name}</h1>
+<div class="sub">评分卡 · 第${currentVersion.versionNumber}版</div>
+${DIMS.map(d => `<div class="dim"><span class="dim-name">${d.label}</span><span class="dim-score">___ / 10</span><div class="dim-bar"><div class="dim-bar-fill" style="width:0%"></div></div></div>`).join('\n')}
+<div class="total">总分：___ / 50</div>
+<div style="margin-top:20px;padding:12px;background:#fff;border:1px solid #d0c8b8;"><strong>评语：</strong><br/><br/><br/></div>
+<div class="footer">古味寻踪 · ${new Date().toLocaleDateString('zh-CN')}</div>
+</body></html>`;
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${currentProject.name}-评分卡.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    addToast('评分卡已导出（可打印给评委填写）', 'success');
+  };
+
   const avgScore = scoredReviewers.length > 0
     ? (scoredReviewers.reduce((s, r) => s + r.totalScore, 0) / scoredReviewers.length).toFixed(1)
     : '暂无';
+
+  const versionAvgHistory = recipeVersions
+    .sort((a, b) => a.versionNumber - b.versionNumber)
+    .map(v => {
+      const vr = allVersionReviews.filter(r => r.recipeVersionId === v.id && r.scored);
+      return {
+        version: v.versionNumber,
+        name: v.name,
+        locked: v.locked,
+        avg: vr.length ? +(vr.reduce((s, r) => s + r.totalScore, 0) / vr.length).toFixed(1) : null,
+        reviewerCount: vr.length,
+        totalReviewers: allVersionReviews.filter(r => r.recipeVersionId === v.id).length,
+      };
+    });
 
   return (
     <div className="max-w-5xl mx-auto space-y-8">
@@ -119,9 +179,23 @@ export default function ReviewPage() {
           <div className="space-y-2">
             {versionReviews.map(r => (
               <div key={r.id} className="flex items-center justify-between px-4 py-2 rounded bg-paper/5">
-                <span className="text-paper">{r.reviewerName}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-paper">{r.reviewerName}</span>
+                  {r.scored ? (
+                    <span className="text-xs px-2 py-0.5 rounded" style={{ background: 'rgba(45,106,79,0.15)', color: 'var(--bamboo-light)' }}>
+                      已评分
+                    </span>
+                  ) : (
+                    <span className="text-xs px-2 py-0.5 rounded" style={{ background: 'rgba(184,134,11,0.15)', color: 'var(--bronze-light)' }}>
+                      待评分
+                    </span>
+                  )}
+                </div>
                 {r.scored ? (
-                  <span className="text-bronze text-sm font-bold">{r.totalScore}/50</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-bronze text-sm font-bold">{r.totalScore}/50</span>
+                    <span className="text-xs text-smoke-light">{new Date(r.reviewedAt).toLocaleDateString('zh-CN')}</span>
+                  </div>
                 ) : (
                   <span className="text-smoke-light text-sm">未评分</span>
                 )}
@@ -174,6 +248,56 @@ export default function ReviewPage() {
         ) : (
           <p className="text-smoke-light text-sm">请先邀请评委</p>
         )}
+      </section>
+
+      <section className="paper-card p-6 space-y-4">
+        <h2 className="font-calligraphy text-xl text-paper flex items-center gap-2"><TrendingUp size={20} /> 评分状态总览</h2>
+        {versionAvgHistory.length > 0 ? (
+          <div className="space-y-3">
+            {versionAvgHistory.map((vh, i) => {
+              const prevAvg = i > 0 ? versionAvgHistory[i - 1].avg : null;
+              const diff = vh.avg !== null && prevAvg !== null ? (vh.avg - prevAvg) : null;
+              return (
+                <div key={vh.version} className="flex items-center gap-4 px-4 py-3 rounded" style={{ background: 'rgba(245,240,232,0.04)', border: '1px solid rgba(245,240,232,0.08)' }}>
+                  <span className="font-calligraphy text-paper text-lg w-24">第{vh.version}版</span>
+                  {vh.locked && <span className="text-xs px-2 py-0.5 rounded" style={{ color: 'var(--vermilion)', border: '1px solid var(--vermilion)' }}>🔒 锁定</span>}
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 text-xs text-smoke-light">
+                      <span>评委 {vh.reviewerCount}/{vh.totalReviewers} 人已评分</span>
+                    </div>
+                    {vh.avg !== null && (
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-bronze font-bold text-lg">{vh.avg}</span>
+                        <span className="text-smoke-light text-sm">/ 50</span>
+                        {diff !== null && diff !== 0 && (
+                          <span className={`text-xs font-bold ${diff > 0 ? 'text-bamboo-light' : 'text-vermilion'}`}>
+                            {diff > 0 ? '↑' : '↓'}{Math.abs(diff).toFixed(1)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {vh.avg === null && <span className="text-smoke-light text-sm">暂无评分</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-smoke-light text-sm">暂无版本数据</p>
+        )}
+      </section>
+
+      <section className="paper-card p-6 space-y-4">
+        <h2 className="font-calligraphy text-xl text-paper flex items-center gap-2"><FileText size={20} /> 评分卡</h2>
+        <p className="text-sm text-smoke-light">生成可打印的评分卡，方便现场评委纸质填写或电子记录</p>
+        <div className="flex gap-3">
+          <button onClick={handleExportScoreCardHtml} className="ink-btn ink-btn-secondary">
+            <Download size={14} /> 导出评分卡（可打印）
+          </button>
+          <button onClick={() => setScoreCardOpen(true)} className="ink-btn ink-btn-ghost">
+            <FileText size={14} /> 预览评分卡
+          </button>
+        </div>
       </section>
 
       <section className="paper-card p-6 space-y-4">
@@ -278,6 +402,41 @@ export default function ReviewPage() {
             </div>
             <div className="flex justify-center mt-4">
               <button onClick={handleDownloadPoster} className="ink-btn ink-btn-secondary"><Download size={14} /> 下载海报</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {scoreCardOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setScoreCardOpen(false)}>
+          <div className="max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
+            <div ref={scoreCardRef} className="p-6 bg-[#0f0f1a] rounded border-2 border-bronze/40 space-y-4">
+              <div className="text-center border-b border-bronze/30 pb-3">
+                <h3 className="font-calligraphy text-2xl text-paper">{currentProject.name}</h3>
+                <p className="text-smoke-light text-sm">评分卡 · 第{currentVersion.versionNumber}版</p>
+              </div>
+              {DIMS.map(d => (
+                <div key={d.key} className="flex items-center justify-between border-b border-paper/10 pb-2">
+                  <span className="font-bold text-paper">{d.label}</span>
+                  <div className="flex items-center gap-2">
+                    <div className="w-32 h-2 rounded-full bg-paper/10" />
+                    <span className="text-bronze font-bold w-16 text-right">___ / 10</span>
+                  </div>
+                </div>
+              ))}
+              <div className="text-center py-2">
+                <span className="text-vermilion font-bold text-xl">总分：___ / 50</span>
+              </div>
+              <div className="border border-paper/10 rounded p-3 text-sm text-smoke-light">
+                评语：<br /><br /><br />
+              </div>
+              <div className="text-center text-xs text-smoke-light">
+                古味寻踪 · {new Date().toLocaleDateString('zh-CN')}
+              </div>
+            </div>
+            <div className="flex justify-center gap-3 mt-4">
+              <button onClick={handleDownloadScoreCard} className="ink-btn ink-btn-secondary"><Download size={14} /> 下载图片</button>
+              <button onClick={handleExportScoreCardHtml} className="ink-btn ink-btn-ghost"><FileText size={14} /> 导出HTML</button>
             </div>
           </div>
         </div>

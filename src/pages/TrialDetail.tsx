@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, Save, Camera, XCircle } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Save, Camera, XCircle, Lock } from 'lucide-react';
 import { useProjectStore } from '@/stores';
 import { FAIL_REASONS } from '@/types';
 
@@ -100,12 +100,25 @@ export default function TrialDetail() {
         </div>
         {(() => {
           const v = recipeVersions.find(rv => rv.id === trial.recipeVersionId);
-          return v ? (
-            <div>
+          if (!v) return null;
+          const isCurrentEditing = currentVersion?.id === v.id;
+          const tagColor = v.locked ? 'var(--vermilion)' : isCurrentEditing ? 'var(--bamboo-light)' : 'var(--bronze-light)';
+          return (
+            <div className="flex items-center gap-1">
               <span style={{ color: 'var(--smoke-light)' }}>基于版本：</span>
-              <span style={{ color: 'var(--bronze)' }}>第{v.versionNumber}版</span>
+              <span
+                className="flex items-center gap-1 text-xs px-2 py-0.5 rounded"
+                style={{
+                  color: tagColor,
+                  border: `1px solid ${v.locked ? 'var(--vermilion)' : isCurrentEditing ? 'var(--bamboo)' : 'var(--bronze)'}`,
+                  background: v.locked ? 'rgba(192,57,43,0.08)' : isCurrentEditing ? 'rgba(45,106,79,0.08)' : 'rgba(184,134,11,0.08)',
+                }}
+              >
+                {v.locked && <Lock size={10} />}
+                第{v.versionNumber}版{v.locked ? '·锁定' : isCurrentEditing ? '·编辑中' : ''}
+              </span>
             </div>
-          ) : null;
+          );
         })()}
       </div>
 

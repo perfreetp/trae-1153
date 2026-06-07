@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, CheckCircle, XCircle, Clock, FlaskConical } from 'lucide-react';
+import { Plus, CheckCircle, XCircle, Clock, FlaskConical, Lock } from 'lucide-react';
 import { useProjectStore } from '@/stores';
 import { generateId } from '@/lib/ingredientDict';
 import { FAIL_REASONS } from '@/types';
@@ -21,6 +21,7 @@ export default function Trials() {
   const [result, setResult] = useState<ResultType>('fail');
   const [failReason, setFailReason] = useState('');
   const [notes, setNotes] = useState('');
+  const [selectedVersionId, setSelectedVersionId] = useState('');
 
   const sortedTrials = useMemo(
     () => [...trials].sort((a, b) => b.round - a.round),
@@ -38,12 +39,14 @@ export default function Trials() {
     fail: trials.filter(t => t.result === 'fail').length,
   }), [trials]);
 
+  const targetVersionId = selectedVersionId || currentVersion?.id || '';
+
   const handleSave = async () => {
-    if (!currentProject || !currentVersion) return;
+    if (!currentProject || !targetVersionId) return;
     const trial: Trial = {
       id: generateId(),
       projectId: currentProject.id,
-      recipeVersionId: currentVersion.id,
+      recipeVersionId: targetVersionId,
       round: nextRound,
       trialDate: new Date().toISOString(),
       parameters: {},
@@ -58,6 +61,17 @@ export default function Trials() {
     setFailReason('');
     setNotes('');
     navigate(`/trials/${trial.id}`);
+  };
+
+  const getVersionTag = (versionId: string) => {
+    const v = recipeVersions.find(rv => rv.id === versionId);
+    if (!v) return null;
+    const isCurrentEditing = currentVersion?.id === v.id;
+    return {
+      versionNumber: v.versionNumber,
+      locked: v.locked,
+      isCurrentEditing,
+    };
   };
 
   return (
@@ -97,6 +111,7 @@ export default function Trials() {
             {sortedTrials.map(trial => {
               const cfg = RESULT_CONFIG[trial.result];
               const Icon = cfg.icon;
+              const vTag = getVersionTag(trial.recipeVersionId);
               return (
                 <div
                   key={trial.id}
@@ -120,6 +135,19 @@ export default function Trials() {
                     >
                       <Icon size={12} /> {cfg.label}
                     </span>
+                    {vTag && (
+                      <span
+                        className="flex items-center gap-1 text-xs px-2 py-0.5 rounded"
+                        style={{
+                          color: vTag.locked ? 'var(--vermilion)' : vTag.isCurrentEditing ? 'var(--bamboo-light)' : 'var(--bronze-light)',
+                          border: `1px solid ${vTag.locked ? 'var(--vermilion)' : vTag.isCurrentEditing ? 'var(--bamboo)' : 'var(--bronze)'}`,
+                          background: vTag.locked ? 'rgba(192,57,43,0.08)' : vTag.isCurrentEditing ? 'rgba(45,106,79,0.08)' : 'rgba(184,134,11,0.08)',
+                        }}
+                      >
+                        {vTag.locked && <Lock size={10} />}
+                        第{vTag.versionNumber}版{vTag.locked ? '·锁定' : vTag.isCurrentEditing ? '·编辑中' : ''}
+                      </span>
+                    )}
                   </div>
                   {trial.notes && (
                     <p className="text-sm" style={{ color: 'var(--smoke-light)' }}>{trial.notes}</p>
@@ -129,10 +157,6 @@ export default function Trials() {
                       原因：{trial.failReason}
                     </p>
                   )}
-                  {(() => {
-                    const v = recipeVersions.find(rv => rv.id === trial.recipeVersionId);
-                    return v ? <p className="text-xs mt-1" style={{ color: 'var(--bronze)' }}>版本：第{v.versionNumber}版</p> : null;
-                  })()}
                 </div>
               );
             })}
@@ -148,6 +172,28 @@ export default function Trials() {
             </h3>
 
             <div className="flex flex-col gap-4">
+              <div>
+                <label className="text-sm mb-1 block" style={{ color: 'var(--smoke-light)' }}>
+                  关联配方版本
+                  <span className="text-xs ml-1" style={{ color: 'var(--vermilion)' }}>※ 试做将绑定此版本</span>
+                </label>
+                <select
+                  className="ink-input"
+                  value={targetVersionId}
+                  onChange={e => setSelectedVersionId(e.target.value)}
+                >
+                  {recipeVersions.map(v => {
+                    const isCurrent = currentVersion?.id === v.id;
+                    const tag = v.locked ? '🔒 锁定' : (isCurrent ? '✏️ 编辑中' : '📋 可编辑');
+                    return (
+                      <option key={v.id} value={v.id}>
+                        第{v.versionNumber}版 [{tag}] — {v.steps.length}步/{v.ingredients.length}种食材
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
               <div>
                 <label className="text-sm mb-1 block" style={{ color: 'var(--smoke-light)' }}>试做结果</label>
                 <div className="flex gap-2">

@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { Archive, Upload, FileText, Download, Package, Eye, Trash2, BookOpen, CheckCircle } from 'lucide-react';
+import { Archive, Upload, FileText, Download, Package, Eye, Trash2, BookOpen, CheckCircle, Settings } from 'lucide-react';
 import { useProjectStore, useUIStore } from '@/stores';
 import { generateId } from '@/lib/ingredientDict';
 import type { ArchiveDoc } from '@/types';
@@ -17,6 +17,10 @@ export default function ArchivePage() {
   const [docType, setDocType] = useState<ArchiveDoc['type']>('authorization');
   const [dragActive, setDragActive] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [lectureVersionId, setLectureVersionId] = useState('');
+  const [includePhotos, setIncludePhotos] = useState(true);
+  const [includeScores, setIncludeScores] = useState(true);
+  const [showLectureSettings, setShowLectureSettings] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -75,18 +79,49 @@ export default function ArchivePage() {
     await saveArchiveData(updated);
   };
 
+  const selectedVersionId = lectureVersionId || currentVersion?.id || '';
+  const selectedVersion = recipeVersions.find(v => v.id === selectedVersionId) || currentVersion;
+  const versionTrials = selectedVersionId
+    ? trials.filter(t => t.recipeVersionId === selectedVersionId)
+    : trials;
+  const versionReviews = selectedVersionId
+    ? reviews.filter(r => r.recipeVersionId === selectedVersionId && r.scored)
+    : reviews.filter(r => r.scored);
+
   const buildLectureHtml = () => {
-    if (!currentProject) return '';
-    const version = currentVersion || recipeVersions[recipeVersions.length - 1];
-    const totalCost = version ? version.ingredients.reduce((s, i) => s + i.quantity * i.unitPrice, 0) : 0;
-    const successTrials = trials.filter(t => t.result === 'success');
-    const failTrials = trials.filter(t => t.result === 'fail');
+    if (!currentProject || !selectedVersion) return '';
+    const version = selectedVersion;
+    const totalCost = version.ingredients.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+    const successTrials = versionTrials.filter(t => t.result === 'success');
+    const failTrials = versionTrials.filter(t => t.result === 'fail');
+    const allTrialPhotos = versionTrials.flatMap(t => t.photos);
+
+    let scoreSection = '';
+    if (includeScores && versionReviews.length > 0) {
+      const avgTotal = (versionReviews.reduce((s, r) => s + r.totalScore, 0) / versionReviews.length).toFixed(1);
+      scoreSection = `
+<h2>${includeScores ? '五' : '四'}、评委评分摘要</h2>
+<div class="conclusion">
+<p>评委人数：${versionReviews.length} 人｜平均总分：<strong style="color:#c0392b;">${avgTotal}</strong> / 50</p>
+<table><tr><th>评委</th><th>色</th><th>香</th><th>味</th><th>形</th><th>还原度</th><th>总分</th><th>评语</th></tr>
+${versionReviews.map(r => `<tr><td>${r.reviewerName}</td><td>${r.scores.appearance}</td><td>${r.scores.aroma}</td><td>${r.scores.taste}</td><td>${r.scores.texture}</td><td>${r.scores.fidelity}</td><td style="font-weight:700;color:#b8860b;">${r.totalScore}</td><td>${r.comments || '-'}</td></tr>`).join('\n')}</table>
+</div>`;
+    }
+
+    let photoSection = '';
+    if (includePhotos && allTrialPhotos.length > 0) {
+      photoSection = `
+<h2>${includeScores ? '六' : includePhotos ? '五' : '四'}、试做照片</h2>
+<div class="photos">
+${allTrialPhotos.slice(0, 20).map((p, i) => `<img src="${p}" alt="试做照片${i + 1}" />`).join('\n')}
+</div>`;
+    }
 
     return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>${currentProject.name} - 教学讲义</title>
+<title>${currentProject.name} - 教学讲义（第${version.versionNumber}版）</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&display=swap');
   body{font-family:'Noto Serif SC',serif;max-width:800px;margin:0 auto;padding:40px 32px;color:#1a1a2e;background:#f5f0e8;line-height:1.8;}
@@ -101,20 +136,22 @@ export default function ArchivePage() {
   .heat{display:inline-block;padding:2px 8px;border-radius:3px;font-size:12px;font-weight:600;color:#fff;}
   .heat-low{background:#2d6a4f;}.heat-medium{background:#b8860b;}.heat-high{background:#c0392b;}.heat-very_high{background:#e74c3c;}
   .conclusion{padding:16px;background:#fff;border:2px solid #b8860b;margin-top:24px;}
+  .photos{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:12px 0;}
+  .photos img{width:100%;border-radius:4px;border:1px solid #d0c8b8;}
   .footer{text-align:center;color:#6a6a7a;font-size:12px;margin-top:40px;border-top:1px solid #d0c8b8;padding-top:16px;}
 </style>
 </head>
 <body>
 <h1>${currentProject.name}</h1>
-<div class="subtitle">失传菜谱复原 · 教学讲义${version ? ` · 第${version.versionNumber}版` : ''}</div>
+<div class="subtitle">失传菜谱复原 · 教学讲义 · 第${version.versionNumber}版</div>
 
 <h2>一、食材用量</h2>
-${version && version.ingredients.length > 0 ? `<table><tr><th>食材</th><th>用量</th><th>单位</th><th>分类</th><th>单价(元)</th><th>小计(元)</th></tr>
+${version.ingredients.length > 0 ? `<table><tr><th>食材</th><th>用量</th><th>单位</th><th>分类</th><th>单价(元)</th><th>小计(元)</th></tr>
 ${version.ingredients.map(i => `<tr><td>${i.name}</td><td>${i.quantity}</td><td>${i.unit}</td><td>${i.category}</td><td>${i.unitPrice.toFixed(2)}</td><td>${(i.quantity * i.unitPrice).toFixed(2)}</td></tr>`).join('\n')}
 <tr><td colspan="5" style="text-align:right;font-weight:700;">合计</td><td style="font-weight:700;color:#c0392b;">¥${totalCost.toFixed(2)}</td></tr></table>` : '<p>暂无食材数据</p>'}
 
 <h2>二、工序步骤</h2>
-${version && version.steps.length > 0 ? version.steps.map((s, i) => `<div class="step">
+${version.steps.length > 0 ? version.steps.map((s, i) => `<div class="step">
 <div class="step-name">${i + 1}. ${s.name}</div>
 <div>${s.description}</div>
 <div style="margin-top:6px;">
@@ -126,16 +163,19 @@ ${s.notes ? `<div style="margin-top:4px;color:#6a6a7a;font-size:13px;">备注：
 </div>`).join('\n') : '<p>暂无工序步骤</p>'}
 
 <h2>三、试做结论</h2>
-<p>总试做次数：${trials.length} 次｜成功：${successTrials.length} 次｜失败：${failTrials.length} 次</p>
-${trials.length > 0 ? `<table><tr><th>轮次</th><th>日期</th><th>结果</th><th>失败原因</th><th>备注</th></tr>
-${trials.map(t => `<tr><td>第${t.round}轮</td><td>${new Date(t.trialDate).toLocaleDateString('zh-CN')}</td><td style="color:${t.result === 'success' ? '#2d6a4f' : t.result === 'fail' ? '#c0392b' : '#b8860b'}">${t.result === 'success' ? '成功' : t.result === 'fail' ? '失败' : '部分成功'}</td><td>${t.failReason || '-'}</td><td>${t.notes || '-'}</td></tr>`).join('\n')}</table>` : '<p>暂无试做记录</p>'}
+<p>总试做次数：${versionTrials.length} 次｜成功：${successTrials.length} 次｜失败：${failTrials.length} 次</p>
+${versionTrials.length > 0 ? `<table><tr><th>轮次</th><th>日期</th><th>结果</th><th>失败原因</th><th>备注</th></tr>
+${versionTrials.map(t => `<tr><td>第${t.round}轮</td><td>${new Date(t.trialDate).toLocaleDateString('zh-CN')}</td><td style="color:${t.result === 'success' ? '#2d6a4f' : t.result === 'fail' ? '#c0392b' : '#b8860b'}">${t.result === 'success' ? '成功' : t.result === 'fail' ? '失败' : '部分成功'}</td><td>${t.failReason || '-'}</td><td>${t.notes || '-'}</td></tr>`).join('\n')}</table>` : '<p>暂无试做记录</p>'}
 
 <h2>四、成本概要</h2>
 <div class="conclusion">
 <p>食材总成本：<strong style="color:#c0392b;">¥${totalCost.toFixed(2)}</strong></p>
-<p>食材种类：${version ? version.ingredients.length : 0} 种</p>
-<p>工序总时长：${version ? version.steps.reduce((s, st) => s + st.durationMinutes, 0) : 0} 分钟</p>
+<p>食材种类：${version.ingredients.length} 种</p>
+<p>工序总时长：${version.steps.reduce((s, st) => s + st.durationMinutes, 0)} 分钟</p>
 </div>
+
+${scoreSection}
+${photoSection}
 
 <div class="footer">古味寻踪 · 失传菜谱复原工作台 · ${new Date().toLocaleDateString('zh-CN')} 生成</div>
 </body></html>`;
@@ -143,13 +183,14 @@ ${trials.map(t => `<tr><td>第${t.round}轮</td><td>${new Date(t.trialDate).toLo
 
   const handleExportLecture = async () => {
     const base = ensureArchive();
-    if (!base) return;
+    if (!base || !selectedVersion) return;
     const html = buildLectureHtml();
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${currentProject?.name || '讲义'}-教学讲义.html`;
+    const date = new Date().toISOString().slice(0, 10);
+    a.download = `${currentProject?.name || '讲义'}-第${selectedVersion.versionNumber}版-讲义-${date}.html`;
     a.click();
     URL.revokeObjectURL(url);
     await saveArchiveData({ ...base, lectureExported: true });
@@ -278,9 +319,13 @@ ${trials.map(t => `<tr><td>第${t.round}轮</td><td>${new Date(t.trialDate).toLo
         <div className="flex items-center gap-2 text-lg font-semibold" style={{ color: 'var(--bamboo)' }}>
           <BookOpen size={20} /> 讲义导出
         </div>
-        <div className="flex gap-3 items-center">
-          <button onClick={() => setShowPreview(v => !v)} className="ink-btn ink-btn-ghost">
-            <Eye size={16} /> {showPreview ? '收起预览' : '预览讲义'}
+
+        <div className="flex gap-3 items-center flex-wrap">
+          <button onClick={() => setShowLectureSettings(v => !v)} className="ink-btn ink-btn-ghost text-sm">
+            <Settings size={14} /> 导出设置
+          </button>
+          <button onClick={() => setShowPreview(v => !v)} className="ink-btn ink-btn-ghost text-sm">
+            <Eye size={14} /> {showPreview ? '收起预览' : '预览讲义'}
           </button>
           <button onClick={handleExportLecture} className="ink-btn ink-btn-secondary">
             <Download size={16} /> 导出讲义
@@ -291,16 +336,56 @@ ${trials.map(t => `<tr><td>第${t.round}轮</td><td>${new Date(t.trialDate).toLo
             </span>
           )}
         </div>
+
+        {showLectureSettings && (
+          <div className="p-4 rounded space-y-4 animate-fade-in" style={{ background: 'rgba(245,240,232,0.04)', border: '1px solid rgba(245,240,232,0.1)' }}>
+            <div>
+              <label className="text-xs mb-1 block" style={{ color: 'var(--smoke-light)' }}>选择导出版本</label>
+              <select
+                className="ink-input w-64"
+                value={selectedVersionId}
+                onChange={e => setLectureVersionId(e.target.value)}
+              >
+                {recipeVersions.map(v => (
+                  <option key={v.id} value={v.id}>
+                    第{v.versionNumber}版{v.locked ? ' 🔒' : ''} — {v.steps.length}步/{v.ingredients.length}种食材
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-6">
+              <label className="flex items-center gap-2 cursor-pointer text-sm" style={{ color: 'var(--paper)' }}>
+                <input
+                  type="checkbox"
+                  checked={includePhotos}
+                  onChange={e => setIncludePhotos(e.target.checked)}
+                  className="accent-[#b8860b] w-4 h-4"
+                />
+                包含试做照片
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer text-sm" style={{ color: 'var(--paper)' }}>
+                <input
+                  type="checkbox"
+                  checked={includeScores}
+                  onChange={e => setIncludeScores(e.target.checked)}
+                  className="accent-[#b8860b] w-4 h-4"
+                />
+                包含评委评分摘要
+              </label>
+            </div>
+          </div>
+        )}
+
         {showPreview && (
           <div className="p-4 rounded space-y-3 animate-fade-in" style={{ background: 'rgba(245,240,232,0.04)', border: '1px solid rgba(245,240,232,0.1)' }}>
             <div className="font-calligraphy text-xl" style={{ color: 'var(--bronze)' }}>
-              {currentProject.name}{currentVersion ? ` — 第${currentVersion.versionNumber}版` : ''}
+              {currentProject.name} — 第{selectedVersion?.versionNumber || 1}版
             </div>
-            {currentVersion && currentVersion.ingredients.length > 0 && (
+            {selectedVersion && selectedVersion.ingredients.length > 0 && (
               <div>
                 <div className="text-sm font-semibold mb-1" style={{ color: 'var(--paper)' }}>食材清单</div>
                 <div className="flex flex-wrap gap-2">
-                  {currentVersion.ingredients.map(ing => (
+                  {selectedVersion.ingredients.map(ing => (
                     <span key={ing.id} className="text-xs px-2 py-0.5 rounded" style={{ background: 'rgba(45,106,79,0.15)', color: 'var(--bamboo-light)' }}>
                       {ing.name} {ing.quantity}{ing.unit}
                     </span>
@@ -308,29 +393,37 @@ ${trials.map(t => `<tr><td>第${t.round}轮</td><td>${new Date(t.trialDate).toLo
                 </div>
               </div>
             )}
-            {currentVersion && currentVersion.steps.length > 0 && (
+            {selectedVersion && selectedVersion.steps.length > 0 && (
               <div>
                 <div className="text-sm font-semibold mb-1" style={{ color: 'var(--paper)' }}>工序步骤</div>
                 <ol className="space-y-1 list-decimal list-inside text-sm" style={{ color: 'var(--paper)' }}>
-                  {currentVersion.steps.map(s => (
+                  {selectedVersion.steps.map(s => (
                     <li key={s.id}>{s.name}（{HEAT_LABELS[s.heatLevel]}、{s.durationMinutes}分钟）：{s.description}</li>
                   ))}
                 </ol>
               </div>
             )}
-            {trials.length > 0 && (
+            {versionTrials.length > 0 && (
               <div>
                 <div className="text-sm font-semibold mb-1" style={{ color: 'var(--paper)' }}>试做结论</div>
                 <p className="text-sm" style={{ color: 'var(--smoke-light)' }}>
-                  共{trials.length}轮试做，成功{trials.filter(t => t.result === 'success').length}轮
+                  共{versionTrials.length}轮试做，成功{versionTrials.filter(t => t.result === 'success').length}轮
                 </p>
               </div>
             )}
-            {currentVersion && currentVersion.ingredients.length > 0 && (
+            {includeScores && versionReviews.length > 0 && (
+              <div>
+                <div className="text-sm font-semibold mb-1" style={{ color: 'var(--paper)' }}>评分摘要</div>
+                <p className="text-sm" style={{ color: 'var(--bronze-light)' }}>
+                  {versionReviews.length}位评委，平均{(versionReviews.reduce((s, r) => s + r.totalScore, 0) / versionReviews.length).toFixed(1)}分
+                </p>
+              </div>
+            )}
+            {selectedVersion && selectedVersion.ingredients.length > 0 && (
               <div>
                 <div className="text-sm font-semibold mb-1" style={{ color: 'var(--paper)' }}>成本概要</div>
                 <p className="text-sm" style={{ color: 'var(--bronze-light)' }}>
-                  合计：¥{currentVersion.ingredients.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0).toFixed(2)}
+                  合计：¥{selectedVersion.ingredients.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0).toFixed(2)}
                 </p>
               </div>
             )}

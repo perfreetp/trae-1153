@@ -144,23 +144,33 @@ export default function Recipe() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <h1 className="font-calligraphy text-3xl text-paper">{currentVersion.name}</h1>
-          {locked && (
-            <span className="flex items-center gap-1 text-vermilion text-sm"><Lock size={14} /> 已锁定</span>
+          {locked ? (
+            <span className="flex items-center gap-1 text-vermilion text-sm px-2 py-0.5 rounded" style={{ border: '1px solid var(--vermilion)', background: 'rgba(192,57,43,0.1)' }}>
+              <Lock size={14} /> 已锁定
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-sm px-2 py-0.5 rounded" style={{ border: '1px solid var(--bamboo)', background: 'rgba(45,106,79,0.1)', color: 'var(--bamboo-light)' }}>
+              ✏️ 当前编辑
+            </span>
           )}
         </div>
         <div className="flex items-center gap-3">
-          {recipeVersions.length > 1 && (
+          {recipeVersions.length > 0 && (
             <div className="flex items-center gap-2">
               <select
-                className="ink-input w-48"
+                className="ink-input w-56"
                 value={currentVersion.id}
                 onChange={e => selectVersion(e.target.value)}
               >
-                {recipeVersions.map(v => (
-                  <option key={v.id} value={v.id}>
-                    第{v.versionNumber}版{v.locked ? ' 🔒' : ''} — {v.steps.length}步/{v.ingredients.length}种食材
-                  </option>
-                ))}
+                {recipeVersions.map(v => {
+                  const isCurrent = v.id === currentVersion.id;
+                  const tag = v.locked ? '🔒 锁定' : (isCurrent ? '✏️ 编辑中' : '📋 可编辑');
+                  return (
+                    <option key={v.id} value={v.id}>
+                      第{v.versionNumber}版 [{tag}] — {v.steps.length}步/{v.ingredients.length}种食材
+                    </option>
+                  );
+                })}
               </select>
             </div>
           )}
