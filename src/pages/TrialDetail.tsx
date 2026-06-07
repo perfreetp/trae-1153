@@ -7,7 +7,7 @@ import { FAIL_REASONS } from '@/types';
 export default function TrialDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { trials, currentVersion, updateTrial } = useProjectStore();
+  const { trials, currentVersion, recipeVersions, updateTrial } = useProjectStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const trial = trials.find(t => t.id === id);
@@ -98,12 +98,15 @@ export default function TrialDetail() {
           <span style={{ color: 'var(--smoke-light)' }}>日期：</span>
           <span style={{ color: 'var(--paper)' }}>{new Date(trial.trialDate).toLocaleDateString('zh-CN')}</span>
         </div>
-        {currentVersion && (
-          <div>
-            <span style={{ color: 'var(--smoke-light)' }}>基于版本：</span>
-            <span style={{ color: 'var(--bronze)' }}>{currentVersion.name}</span>
-          </div>
-        )}
+        {(() => {
+          const v = recipeVersions.find(rv => rv.id === trial.recipeVersionId);
+          return v ? (
+            <div>
+              <span style={{ color: 'var(--smoke-light)' }}>基于版本：</span>
+              <span style={{ color: 'var(--bronze)' }}>第{v.versionNumber}版</span>
+            </div>
+          ) : null;
+        })()}
       </div>
 
       {trial.result === 'fail' && trial.failReason && (

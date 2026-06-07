@@ -79,6 +79,7 @@ export interface Review {
   totalScore: number;
   comments: string;
   reviewedAt: string;
+  scored: boolean;
 }
 
 export interface ArchiveDoc {

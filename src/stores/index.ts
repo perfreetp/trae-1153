@@ -37,6 +37,7 @@ interface ProjectStore {
 
   loadReviews: () => Promise<void>;
   addReview: (review: Review) => Promise<void>;
+  updateReview: (review: Review) => Promise<void>;
 
   loadArchive: () => Promise<void>;
   saveArchiveData: (archive: Archive) => Promise<void>;
@@ -238,6 +239,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   addReview: async (review) => {
     await saveReview(review);
     set(state => ({ reviews: [...state.reviews, review] }));
+  },
+
+  updateReview: async (review) => {
+    await saveReview(review);
+    set(state => ({ reviews: state.reviews.map(r => r.id === review.id ? review : r) }));
   },
 
   loadArchive: async () => {

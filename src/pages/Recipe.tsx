@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, Plus, Trash2, Flame, Clock, Save, Lock } from 'lucide-react';
-import { useProjectStore } from '@/stores';
+import { GripVertical, Plus, Trash2, Flame, Clock, Save, Lock, Copy, ChevronDown } from 'lucide-react';
+import { useProjectStore, useUIStore } from '@/stores';
 import { generateId } from '@/lib/ingredientDict';
 import type { RecipeStep, Ingredient, HeatLevel } from '@/types';
 import { HEAT_LABELS, HEAT_COLORS, INGREDIENT_CATEGORIES } from '@/types';
@@ -69,8 +69,10 @@ function SortableStepCard({ step, index, onChange, onRemove, disabled }: {
 }
 
 export default function Recipe() {
-  const { currentVersion, updateSteps, updateIngredients, saveCurrentVersion } = useProjectStore();
+  const { currentVersion, currentProject, recipeVersions, updateSteps, updateIngredients, saveCurrentVersion, createVersion, selectVersion } = useProjectStore();
+  const addToast = useUIStore(s => s.addToast);
   const [saving, setSaving] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   if (!currentVersion) {
     return (
@@ -126,16 +128,46 @@ export default function Recipe() {
     setSaving(false);
   };
 
+  const handleCreateVersion = async () => {
+    if (!currentVersion) return;
+    setCreating(true);
+    try {
+      await createVersion(currentVersion);
+      addToast(`已创建新版本`, 'success');
+    } finally {
+      setCreating(false);
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-8">
-      <div className="flex items-center justify-between">
-        <h1 className="font-calligraphy text-3xl text-paper">{currentVersion.name}</h1>
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
+          <h1 className="font-calligraphy text-3xl text-paper">{currentVersion.name}</h1>
           {locked && (
-            <span className="flex items-center gap-1 text-vermilion text-sm">
-              <Lock size={14} /> 已锁定
-            </span>
+            <span className="flex items-center gap-1 text-vermilion text-sm"><Lock size={14} /> 已锁定</span>
           )}
+        </div>
+        <div className="flex items-center gap-3">
+          {recipeVersions.length > 1 && (
+            <div className="flex items-center gap-2">
+              <select
+                className="ink-input w-48"
+                value={currentVersion.id}
+                onChange={e => selectVersion(e.target.value)}
+              >
+                {recipeVersions.map(v => (
+                  <option key={v.id} value={v.id}>
+                    第{v.versionNumber}版{v.locked ? ' 🔒' : ''} — {v.steps.length}步/{v.ingredients.length}种食材
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <button onClick={handleCreateVersion} disabled={creating}
+            className="ink-btn ink-btn-ghost text-sm disabled:opacity-40">
+            <Copy size={14} /> {creating ? '创建中...' : '新建版本'}
+          </button>
           <button onClick={handleSave} disabled={saving || locked}
             className="ink-btn ink-btn-secondary disabled:opacity-40">
             <Save size={16} /> {saving ? '保存中...' : '保存'}

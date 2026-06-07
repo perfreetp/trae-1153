@@ -16,7 +16,7 @@ const RESULT_CONFIG: Record<ResultType, { label: string; color: string; icon: ty
 
 export default function Trials() {
   const navigate = useNavigate();
-  const { trials, currentProject, currentVersion, addTrial } = useProjectStore();
+  const { trials, currentProject, currentVersion, recipeVersions, addTrial } = useProjectStore();
   const [showModal, setShowModal] = useState(false);
   const [result, setResult] = useState<ResultType>('fail');
   const [failReason, setFailReason] = useState('');
@@ -129,6 +129,10 @@ export default function Trials() {
                       原因：{trial.failReason}
                     </p>
                   )}
+                  {(() => {
+                    const v = recipeVersions.find(rv => rv.id === trial.recipeVersionId);
+                    return v ? <p className="text-xs mt-1" style={{ color: 'var(--bronze)' }}>版本：第{v.versionNumber}版</p> : null;
+                  })()}
                 </div>
               );
             })}

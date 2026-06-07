@@ -12,14 +12,15 @@ const DIMS: { key: keyof ReviewScore; label: string }[] = [
   { key: 'fidelity', label: '还原度' },
 ];
 
-const emptyScores = (): ReviewScore => ({ appearance: 5, aroma: 5, taste: 5, texture: 5, fidelity: 5 });
+const zeroScores = (): ReviewScore => ({ appearance: 0, aroma: 0, taste: 0, texture: 0, fidelity: 0 });
 
 export default function ReviewPage() {
-  const { currentProject, currentVersion, recipeVersions, reviews, addReview, lockVersion, selectVersion } = useProjectStore();
+  const { currentProject, currentVersion, recipeVersions, reviews, addReview, updateReview, lockVersion, selectVersion } = useProjectStore();
   const addToast = useUIStore(s => s.addToast);
 
   const [reviewerName, setReviewerName] = useState('');
-  const [scores, setScores] = useState<ReviewScore>(emptyScores());
+  const [selectedReviewerId, setSelectedReviewerId] = useState('');
+  const [scores, setScores] = useState<ReviewScore>(zeroScores());
   const [comments, setComments] = useState('');
   const [compareA, setCompareA] = useState('');
   const [compareB, setCompareB] = useState('');
@@ -31,32 +32,46 @@ export default function ReviewPage() {
     return <div className="flex items-center justify-center h-[60vh] text-smoke-light">请先选择一个项目</div>;
   }
 
+  const allVersionReviews = reviews.filter(r => r.projectId === currentProject.id);
   const versionReviews = reviews.filter(r => r.recipeVersionId === currentVersion.id);
+  const unscoredReviewers = versionReviews.filter(r => !r.scored);
+  const scoredReviewers = versionReviews.filter(r => r.scored);
   const totalScore = Object.values(scores).reduce((a, b) => a + b, 0);
 
-  const handleAddReviewer = () => {
+  const handleAddReviewer = async () => {
     if (!reviewerName.trim()) { addToast('请输入评委姓名', 'error'); return; }
+    const exists = versionReviews.some(r => r.reviewerName === reviewerName.trim());
+    if (exists) { addToast('该评委已存在', 'error'); return; }
     const review: Review = {
       id: generateId(), projectId: currentProject.id, recipeVersionId: currentVersion.id,
-      reviewerName: reviewerName.trim(), scores: emptyScores(), totalScore: 25, comments: '', reviewedAt: new Date().toISOString(),
+      reviewerName: reviewerName.trim(), scores: zeroScores(), totalScore: 0, comments: '',
+      reviewedAt: new Date().toISOString(), scored: false,
     };
-    addReview(review);
+    await addReview(review);
     setReviewerName('');
     addToast(`已邀请评委: ${review.reviewerName}`, 'success');
   };
 
+  const handleSelectReviewer = (id: string) => {
+    const reviewer = versionReviews.find(r => r.id === id);
+    if (!reviewer) return;
+    setSelectedReviewerId(id);
+    setScores(reviewer.scored ? { ...reviewer.scores } : { appearance: 5, aroma: 5, taste: 5, texture: 5, fidelity: 5 });
+    setComments(reviewer.comments);
+  };
+
   const handleSaveScore = async () => {
-    const existing = versionReviews.find(r => r.reviewerName === reviewerName.trim());
-    if (existing) {
-      addToast('该评委已有评分记录', 'error'); return;
-    }
-    const review: Review = {
-      id: generateId(), projectId: currentProject.id, recipeVersionId: currentVersion.id,
-      reviewerName: reviewerName.trim() || '匿名评委', scores, totalScore, comments, reviewedAt: new Date().toISOString(),
+    if (!selectedReviewerId) { addToast('请先选择一位评委', 'error'); return; }
+    const reviewer = versionReviews.find(r => r.id === selectedReviewerId);
+    if (!reviewer) return;
+    const updated: Review = {
+      ...reviewer, scores, totalScore, comments, reviewedAt: new Date().toISOString(), scored: true,
     };
-    await addReview(review);
-    setScores(emptyScores()); setComments('');
-    addToast('评分已保存', 'success');
+    await updateReview(updated);
+    setSelectedReviewerId('');
+    setScores(zeroScores());
+    setComments('');
+    addToast(`${reviewer.reviewerName} 的评分已保存`, 'success');
   };
 
   const handleLock = async () => {
@@ -69,8 +84,8 @@ export default function ReviewPage() {
   const verB = recipeVersions.find(v => v.id === compareB);
 
   const buildRadarData = () => {
-    const reviewsA = reviews.filter(r => r.recipeVersionId === compareA);
-    const reviewsB = reviews.filter(r => r.recipeVersionId === compareB);
+    const reviewsA = allVersionReviews.filter(r => r.recipeVersionId === compareA && r.scored);
+    const reviewsB = allVersionReviews.filter(r => r.recipeVersionId === compareB && r.scored);
     const avg = (arr: Review[], key: keyof ReviewScore) => arr.length ? +(arr.reduce((s, r) => s + r.scores[key], 0) / arr.length).toFixed(1) : 0;
     return DIMS.map(d => ({ dimension: d.label, [verA?.name || 'A']: avg(reviewsA, d.key), [verB?.name || 'B']: avg(reviewsB, d.key) }));
   };
@@ -85,6 +100,10 @@ export default function ReviewPage() {
     addToast('海报已下载', 'success');
   };
 
+  const avgScore = scoredReviewers.length > 0
+    ? (scoredReviewers.reduce((s, r) => s + r.totalScore, 0) / scoredReviewers.length).toFixed(1)
+    : '暂无';
+
   return (
     <div className="max-w-5xl mx-auto space-y-8">
       <h1 className="font-calligraphy text-3xl text-paper">评审发布</h1>
@@ -92,7 +111,8 @@ export default function ReviewPage() {
       <section className="paper-card p-6 space-y-4">
         <h2 className="font-calligraphy text-xl text-paper flex items-center gap-2"><Users size={20} /> 评委邀请</h2>
         <div className="flex gap-3">
-          <input className="ink-input flex-1" placeholder="评委姓名" value={reviewerName} onChange={e => setReviewerName(e.target.value)} />
+          <input className="ink-input flex-1" placeholder="评委姓名" value={reviewerName}
+            onChange={e => setReviewerName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddReviewer()} />
           <button onClick={handleAddReviewer} className="ink-btn ink-btn-secondary"><Users size={14} /> 添加评委</button>
         </div>
         {versionReviews.length > 0 && (
@@ -100,32 +120,60 @@ export default function ReviewPage() {
             {versionReviews.map(r => (
               <div key={r.id} className="flex items-center justify-between px-4 py-2 rounded bg-paper/5">
                 <span className="text-paper">{r.reviewerName}</span>
-                <span className={`text-sm ${r.totalScore > 0 ? 'text-bronze' : 'text-smoke-light'}`}>
-                  {r.totalScore > 0 ? `${r.totalScore} 分` : '未评分'}
-                </span>
+                {r.scored ? (
+                  <span className="text-bronze text-sm font-bold">{r.totalScore}/50</span>
+                ) : (
+                  <span className="text-smoke-light text-sm">未评分</span>
+                )}
               </div>
             ))}
+            <div className="flex items-center gap-2 pt-2 text-sm">
+              <span className="text-smoke-light">已评分：{scoredReviewers.length}/{versionReviews.length}</span>
+              <span className="text-smoke-light">｜</span>
+              <span className="text-smoke-light">平均分：{avgScore}</span>
+            </div>
           </div>
         )}
       </section>
 
       <section className="paper-card p-6 space-y-4">
         <h2 className="font-calligraphy text-xl text-paper flex items-center gap-2"><Star size={20} /> 打分面板</h2>
-        <div className="space-y-3">
-          {DIMS.map(d => (
-            <div key={d.key} className="flex items-center gap-4">
-              <span className="w-16 text-bronze font-bold">{d.label}</span>
-              <input type="range" min={1} max={10} value={scores[d.key]}
-                onChange={e => setScores({ ...scores, [d.key]: Number(e.target.value) })}
-                className="flex-1 accent-[#b8860b]" />
-              <span className="w-8 text-center text-paper font-bold">{scores[d.key]}</span>
+        {unscoredReviewers.length > 0 ? (
+          <>
+            <div>
+              <label className="text-sm mb-1 block text-smoke-light">选择评委</label>
+              <select className="ink-input" value={selectedReviewerId} onChange={e => handleSelectReviewer(e.target.value)}>
+                <option value="">-- 请选择评委 --</option>
+                {unscoredReviewers.map(r => (
+                  <option key={r.id} value={r.id}>{r.reviewerName}</option>
+                ))}
+              </select>
             </div>
-          ))}
-        </div>
-        <div className="text-right text-lg text-bronze font-bold">总分: {totalScore} / 50</div>
-        <textarea className="ink-input min-h-[80px] resize-y" placeholder="评语..." value={comments}
-          onChange={e => setComments(e.target.value)} />
-        <button onClick={handleSaveScore} className="ink-btn ink-btn-primary"><Star size={14} /> 保存评分</button>
+            {selectedReviewerId && (
+              <>
+                <div className="space-y-3">
+                  {DIMS.map(d => (
+                    <div key={d.key} className="flex items-center gap-4">
+                      <span className="w-16 text-bronze font-bold">{d.label}</span>
+                      <input type="range" min={1} max={10} value={scores[d.key]}
+                        onChange={e => setScores({ ...scores, [d.key]: Number(e.target.value) })}
+                        className="flex-1 accent-[#b8860b]" />
+                      <span className="w-8 text-center text-paper font-bold">{scores[d.key]}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="text-right text-lg text-bronze font-bold">总分: {totalScore} / 50</div>
+                <textarea className="ink-input min-h-[80px] resize-y" placeholder="评语..." value={comments}
+                  onChange={e => setComments(e.target.value)} />
+                <button onClick={handleSaveScore} className="ink-btn ink-btn-primary"><Star size={14} /> 保存评分</button>
+              </>
+            )}
+          </>
+        ) : versionReviews.length > 0 ? (
+          <p className="text-smoke-light text-sm">所有评委已完成评分</p>
+        ) : (
+          <p className="text-smoke-light text-sm">请先邀请评委</p>
+        )}
       </section>
 
       <section className="paper-card p-6 space-y-4">
@@ -143,15 +191,18 @@ export default function ReviewPage() {
         {verA && verB && (
           <>
             <div className="grid grid-cols-2 gap-4">
-              {([verA, verB] as const).map(v => (
-                <div key={v.id} className="bg-paper/5 rounded p-4 space-y-1 text-sm">
-                  <p className="font-bold text-paper">{v.name}</p>
-                  <p className="text-smoke-light">步骤数: {v.steps.length}</p>
-                  <p className="text-smoke-light">食材数: {v.ingredients.length}</p>
-                  <p className="text-smoke-light">总时长: {v.steps.reduce((s, st) => s + st.durationMinutes, 0)} 分钟</p>
-                  <p className="text-bronze">平均分: {(() => { const rv = reviews.filter(r => r.recipeVersionId === v.id); return rv.length ? (rv.reduce((s, r) => s + r.totalScore, 0) / rv.length).toFixed(1) : '暂无'; })()}</p>
-                </div>
-              ))}
+              {([verA, verB] as const).map(v => {
+                const rv = allVersionReviews.filter(r => r.recipeVersionId === v.id && r.scored);
+                return (
+                  <div key={v.id} className="bg-paper/5 rounded p-4 space-y-1 text-sm">
+                    <p className="font-bold text-paper">{v.name}</p>
+                    <p className="text-smoke-light">步骤数: {v.steps.length}</p>
+                    <p className="text-smoke-light">食材数: {v.ingredients.length}</p>
+                    <p className="text-smoke-light">总时长: {v.steps.reduce((s, st) => s + st.durationMinutes, 0)} 分钟</p>
+                    <p className="text-bronze">平均分: {rv.length ? (rv.reduce((s, r) => s + r.totalScore, 0) / rv.length).toFixed(1) : '暂无'}</p>
+                  </div>
+                );
+              })}
             </div>
             <ResponsiveContainer width="100%" height={300}>
               <RadarChart data={buildRadarData()}>
@@ -215,10 +266,13 @@ export default function ReviewPage() {
               </div>
               <div className="space-y-2">
                 <p className="text-bronze font-bold">评分</p>
-                {versionReviews.map(r => (
+                {scoredReviewers.map(r => (
                   <p key={r.id} className="text-paper">{r.reviewerName}: <span className="text-bronze font-bold">{r.totalScore}</span>/50</p>
                 ))}
-                {versionReviews.length === 0 && <p className="text-smoke-light">暂无评分</p>}
+                {scoredReviewers.length === 0 && <p className="text-smoke-light">暂无评分</p>}
+                {scoredReviewers.length > 0 && (
+                  <p className="text-paper">平均分: <span className="text-bronze font-bold">{avgScore}</span>/50</p>
+                )}
               </div>
               <div className="border-t border-bronze/30 pt-3 text-smoke-light text-xs">— 传世之味 · 不负匠心 —</div>
             </div>
