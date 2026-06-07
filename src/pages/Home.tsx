@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, BookOpen, FlaskConical, Star, Archive, Download, Upload, HardDrive, AlertTriangle, ClipboardCheck, CheckCircle2, Circle, ChevronRight, FileText } from 'lucide-react';
+import { Plus, BookOpen, FlaskConical, Star, Archive, Download, Upload, HardDrive, AlertTriangle, ClipboardCheck, CheckCircle2, Circle, ChevronRight, FileText, Clock, Shield, Eye } from 'lucide-react';
 import { useProjectStore, useUIStore } from '@/stores';
 import { generateId } from '@/lib/ingredientDict';
 import type { Project } from '@/types';
@@ -33,7 +33,7 @@ const DELIVERABLES: Deliverable[] = [
     detail: d => `${d.trials} 轮试做（${d.successTrials} 成功）` },
   { key: 'reviews', label: '评审评分', link: '/review',
     check: d => d.scoredReviews > 0,
-    detail: d => `${d.invitedReviewers} 人已邀请，${d.scoredReviews} 人已评分` },
+    detail: d => d.reviewStatusDetail || `${d.invitedReviewers} 人已邀请，${d.scoredReviews} 人已评分` },
   { key: 'locked', label: '配方锁定', link: '/review',
     check: d => d.hasLockedVersion,
     detail: d => d.hasLockedVersion ? '已有锁定版本' : '尚未锁定任何版本' },
@@ -44,13 +44,23 @@ const DELIVERABLES: Deliverable[] = [
     check: d => d.authDocs > 0,
     detail: d => `${d.authDocs} 份授权/证明材料` },
   { key: 'backup', label: '项目备份', link: '/',
-    check: () => false,
-    detail: () => '请在现场备份中心手动备份' },
+    check: d => !!d.lastBackupAt,
+    detail: d => d.lastBackupAt ? `最近备份：${new Date(d.lastBackupAt).toLocaleString('zh-CN')}` : '尚未备份' },
 ];
+
+const AUDIT_ACTION_LABELS: Record<string, string> = {
+  lock_version: '锁定配方',
+  export_lecture: '导出讲义',
+  issue_scorecard: '发放评分卡',
+  package_delivery: '打包交付',
+  restore_backup: '恢复备份',
+  sign_confirmation: '签收确认',
+  backup_project: '备份项目',
+};
 
 export default function Home() {
   const navigate = useNavigate();
-  const { projects, currentProject, loadProjects, createProject, selectProject } = useProjectStore();
+  const { projects, currentProject, loadProjects, createProject, selectProject, addAuditLog, updateProjectField } = useProjectStore();
   const addToast = useUIStore(s => s.addToast);
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState('');
@@ -62,6 +72,8 @@ export default function Home() {
   const [showChecklist, setShowChecklist] = useState(false);
   const [checklistProjectId, setChecklistProjectId] = useState('');
   const [checklistData, setChecklistData] = useState<Record<string, any>>({});
+  const [checklistProject, setChecklistProject] = useState<Project | null>(null);
+  const [showAuditLog, setShowAuditLog] = useState(false);
   const backupInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { loadProjects(); }, [loadProjects]);
@@ -84,7 +96,7 @@ export default function Home() {
     ]);
     const archive = await getArchive(projectId);
     const data = {
-      _meta: { exportedAt: new Date().toISOString(), app: '古味寻踪', version: '3.0', type: 'project-backup' },
+      _meta: { exportedAt: new Date().toISOString(), app: '古味寻踪', version: '4.0', type: 'project-backup' },
       project, materials, recipeVersions, trials, reviews, archive: archive || null,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -95,6 +107,8 @@ export default function Home() {
     a.download = `${project.name}-备份-${date}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    await updateProjectField(projectId, { lastBackupAt: new Date().toISOString() });
+    await addAuditLog(projectId, 'backup_project', `${project.name} 备份已下载`);
     addToast(`${project.name} 备份已下载`, 'success');
   };
 
@@ -124,19 +138,27 @@ export default function Home() {
       if (restoreMode === 'overwrite' && restoreTarget) {
         await deleteProjectData(restoreTarget);
         const data = restorePreview;
-        const project = { ...data.project, id: restoreTarget };
+        const versionIdMap: Record<string, string> = {};
+        const project = { ...data.project, id: restoreTarget, lastBackupAt: new Date().toISOString() };
         await saveProject(project);
-        if (data.materials) for (const m of data.materials) await saveMaterial({ ...m, projectId: restoreTarget });
-        if (data.recipeVersions) for (const v of data.recipeVersions) await saveRecipeVersion({ ...v, projectId: restoreTarget });
-        if (data.trials) for (const t of data.trials) await saveTrial({ ...t, projectId: restoreTarget });
-        if (data.reviews) for (const r of data.reviews) await saveReview({ ...r, projectId: restoreTarget });
-        if (data.archive) await saveArchive({ ...data.archive, projectId: restoreTarget });
-        addToast('备份已覆盖恢复到选中项目（旧数据已清理）', 'success');
+        if (data.recipeVersions) {
+          for (const v of data.recipeVersions) {
+            const newVid = generateId();
+            versionIdMap[v.id] = newVid;
+            await saveRecipeVersion({ ...v, id: newVid, projectId: restoreTarget });
+          }
+        }
+        if (data.materials) for (const m of data.materials) await saveMaterial({ ...m, id: generateId(), projectId: restoreTarget });
+        if (data.trials) for (const t of data.trials) await saveTrial({ ...t, id: generateId(), projectId: restoreTarget, recipeVersionId: versionIdMap[t.recipeVersionId] || t.recipeVersionId });
+        if (data.reviews) for (const r of data.reviews) await saveReview({ ...r, id: generateId(), projectId: restoreTarget, recipeVersionId: versionIdMap[r.recipeVersionId] || r.recipeVersionId });
+        if (data.archive) await saveArchive({ ...data.archive, id: generateId(), projectId: restoreTarget });
+        await addAuditLog(restoreTarget, 'restore_backup', `覆盖恢复：${data.project?.name}`);
+        addToast('备份已覆盖恢复到选中项目（旧数据已清理，版本已重映射）', 'success');
       } else {
         const newProjectId = generateId();
         const versionIdMap: Record<string, string> = {};
         const data = restorePreview;
-        const project = { ...data.project, id: newProjectId, name: data.project.name + '（恢复）', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+        const project = { ...data.project, id: newProjectId, name: data.project.name + '（恢复）', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), lastBackupAt: new Date().toISOString() };
         await saveProject(project);
         if (data.recipeVersions) {
           for (const v of data.recipeVersions) {
@@ -149,6 +171,7 @@ export default function Home() {
         if (data.trials) for (const t of data.trials) await saveTrial({ ...t, id: generateId(), projectId: newProjectId, recipeVersionId: versionIdMap[t.recipeVersionId] || t.recipeVersionId });
         if (data.reviews) for (const r of data.reviews) await saveReview({ ...r, id: generateId(), projectId: newProjectId, recipeVersionId: versionIdMap[r.recipeVersionId] || r.recipeVersionId });
         if (data.archive) await saveArchive({ ...data.archive, id: generateId(), projectId: newProjectId });
+        await addAuditLog(newProjectId, 'restore_backup', `恢复为新项目：${project.name}`);
         addToast('备份已恢复为新项目（试做/评审已关联到新版本）', 'success');
       }
       await loadProjects();
@@ -160,14 +183,18 @@ export default function Home() {
   };
 
   const openChecklist = async (projectId: string) => {
-    const { getMaterials, getRecipeVersions, getTrials, getReviews, getArchive } = await import('@/lib/database');
+    const { getMaterials, getRecipeVersions, getTrials, getReviews, getArchive, getProject } = await import('@/lib/database');
     const [materials, versions, trials, reviews] = await Promise.all([
       getMaterials(projectId), getRecipeVersions(projectId),
       getTrials(projectId), getReviews(projectId),
     ]);
     const archive = await getArchive(projectId);
+    const project = await getProject(projectId);
     const authDocs = (archive?.documents ?? []).filter((d: any) => d.type === 'authorization' || d.type === 'proof').length;
     const totalSteps = versions.reduce((s: number, v: any) => s + v.steps.length, 0);
+    const invitedCount = reviews.filter((r: any) => !r.scoreCardIssued && !r.scored).length;
+    const issuedCount = reviews.filter((r: any) => r.scoreCardIssued && !r.scored).length;
+    const scoredCount = reviews.filter((r: any) => r.scored).length;
     setChecklistData({
       materials: materials.length,
       versions: versions.length,
@@ -180,12 +207,21 @@ export default function Home() {
       hasLockedVersion: versions.some((v: any) => v.locked),
       lectureExported: archive?.lectureExported ?? false,
       authDocs,
+      lastBackupAt: project?.lastBackupAt,
+      lastPackageExportAt: project?.lastPackageExportAt,
+      confirmationSignedAt: project?.confirmationSignedAt,
+      reviewStatusDetail: `已邀请 ${invitedCount} / 已发放 ${issuedCount} / 已评分 ${scoredCount}`,
+      reviewInvited: invitedCount,
+      reviewIssued: issuedCount,
+      reviewScored: scoredCount,
     });
     setChecklistProjectId(projectId);
+    setChecklistProject(project || null);
     setShowChecklist(true);
+    setShowAuditLog(false);
   };
 
-  const handleExportConfirmation = () => {
+  const handleExportConfirmation = async () => {
     const project = projects.find(p => p.id === checklistProjectId);
     if (!project) return;
     const d = checklistData;
@@ -195,11 +231,28 @@ export default function Home() {
       return `<tr><td>${item.label}</td><td>${item.detail(d)}</td><td style="color:${ok ? '#2d6a4f' : '#c0392b'};font-weight:700;">${ok ? '✔ 齐全' : '✘ 缺失'}</td></tr>`;
     }).join('\n');
     const allDone = DELIVERABLES.filter(i => i.key !== 'backup').every(i => i.check(d));
+
+    let reviewSection = '';
+    if (d.reviewInvited !== undefined) {
+      reviewSection = `<h2>评审状态</h2><table><tr><th>状态</th><th>人数</th></tr>
+<tr><td>已邀请（未发卡）</td><td>${d.reviewInvited}</td></tr>
+<tr><td>已发放（待回收）</td><td>${d.reviewIssued}</td></tr>
+<tr><td>已评分</td><td>${d.reviewScored}</td></tr></table>`;
+    }
+
+    let auditSection = '';
+    const auditLog = project.auditLog || [];
+    if (auditLog.length > 0) {
+      auditSection = `<h2>关键操作记录</h2><table><tr><th>操作</th><th>详情</th><th>时间</th></tr>
+${auditLog.map(e => `<tr><td>${AUDIT_ACTION_LABELS[e.action] || e.action}</td><td>${e.detail}</td><td>${new Date(e.timestamp).toLocaleString('zh-CN')}</td></tr>`).join('\n')}</table>`;
+    }
+
     const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>${project.name} 交付确认单</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&display=swap');
 body{font-family:'Noto Serif SC',serif;max-width:700px;margin:0 auto;padding:40px;color:#1a1a2e;background:#f5f0e8;line-height:1.8;}
 h1{text-align:center;border-bottom:3px double #b8860b;padding-bottom:12px;font-size:24px;}
+h2{font-size:16px;color:#c0392b;border-left:4px solid #c0392b;padding-left:12px;margin-top:24px;}
 table{width:100%;border-collapse:collapse;margin:16px 0;}
 th,td{border:1px solid #d0c8b8;padding:8px 12px;text-align:left;font-size:14px;}
 th{background:#e8e0d0;font-weight:600;}
@@ -213,6 +266,8 @@ th{background:#e8e0d0;font-weight:600;}
 <p style="text-align:center;font-size:18px;font-weight:700;color:${allDone ? '#2d6a4f' : '#c0392b'};">
 ${allDone ? '✔ 所有交付项齐全，可签收' : '⚠ 部分交付项缺失，请补齐后签收'}
 </p>
+${reviewSection}
+${auditSection}
 <div class="sign">
 <div class="sign-row"><span>项目负责人签字：</span><span class="sign-line"></span></div>
 <div class="sign-row"><span>接收方签字：</span><span class="sign-line"></span></div>
@@ -226,6 +281,8 @@ ${allDone ? '✔ 所有交付项齐全，可签收' : '⚠ 部分交付项缺失
     a.download = `${project.name}-交付确认单-${date.replace(/\//g, '-')}.html`;
     a.click();
     URL.revokeObjectURL(url);
+    await updateProjectField(project.id, { confirmationSignedAt: new Date().toISOString() });
+    await addAuditLog(project.id, 'sign_confirmation', '导出交付确认单');
     addToast('交付确认单已导出', 'success');
   };
 
@@ -283,6 +340,23 @@ ${allDone ? '✔ 所有交付项齐全，可签收' : '⚠ 部分交付项缺失
                 <span className={`seal-badge ${STATUS_MAP[p.status].cls}`}>{STATUS_MAP[p.status].label}</span>
               </div>
               <p className="text-sm line-clamp-2 mb-3" style={{ color: 'var(--smoke-light)' }}>{p.description || '暂无描述'}</p>
+              <div className="space-y-1 mb-3 text-xs" style={{ color: 'var(--smoke)' }}>
+                {p.lastBackupAt && (
+                  <div className="flex items-center gap-1">
+                    <HardDrive size={10} /> 最近备份：{new Date(p.lastBackupAt).toLocaleString('zh-CN')}
+                  </div>
+                )}
+                {p.lastPackageExportAt && (
+                  <div className="flex items-center gap-1">
+                    <Archive size={10} /> 最近交付包：{new Date(p.lastPackageExportAt).toLocaleString('zh-CN')}
+                  </div>
+                )}
+                {p.confirmationSignedAt && (
+                  <div className="flex items-center gap-1" style={{ color: 'var(--bamboo)' }}>
+                    <Shield size={10} /> 已签收：{new Date(p.confirmationSignedAt).toLocaleString('zh-CN')}
+                  </div>
+                )}
+              </div>
               <div className="flex items-center justify-between text-xs" style={{ color: 'var(--smoke)' }}>
                 <span>{new Date(p.createdAt).toLocaleDateString('zh-CN')}</span>
                 <div className="flex gap-2">
@@ -336,7 +410,14 @@ ${allDone ? '✔ 所有交付项齐全，可签收' : '⚠ 部分交付项缺失
                 <div className="space-y-2">
                   {projects.map(p => (
                     <div key={p.id} className="flex items-center justify-between px-3 py-2 rounded" style={{ background: 'rgba(245,240,232,0.04)', border: '1px solid rgba(245,240,232,0.08)' }}>
-                      <span className="text-sm" style={{ color: 'var(--paper)' }}>{p.name}</span>
+                      <div>
+                        <span className="text-sm" style={{ color: 'var(--paper)' }}>{p.name}</span>
+                        {p.lastBackupAt && (
+                          <span className="text-xs ml-2" style={{ color: 'var(--smoke)' }}>
+                            最近备份：{new Date(p.lastBackupAt).toLocaleString('zh-CN')}
+                          </span>
+                        )}
+                      </div>
                       <button onClick={() => handleBackupProject(p.id)} className="ink-btn ink-btn-ghost text-xs">
                         <Download size={12} /> 备份
                       </button>
@@ -350,7 +431,7 @@ ${allDone ? '✔ 所有交付项齐全，可签收' : '⚠ 部分交付项缺失
                 <Upload size={14} className="inline mr-1" />恢复备份
               </h3>
               <p className="text-xs mb-3" style={{ color: 'var(--smoke-light)' }}>
-                恢复为新项目时，试做和评审会重新关联到新版本；覆盖时旧数据将先清除再写入
+                恢复为新项目时，试做和评审会重新关联到新版本；覆盖时旧数据将先清除再写入，所有记录获得独立新ID
               </p>
               <button onClick={() => backupInputRef.current?.click()} className="ink-btn ink-btn-secondary text-sm mb-3">
                 <Upload size={14} /> 选择备份文件
@@ -368,6 +449,24 @@ ${allDone ? '✔ 所有交付项齐全，可签收' : '⚠ 部分交付项缺失
                       <span>归档材料：{restorePreview.archive?.documents?.length ?? 0} 份</span>
                       <span>导出时间：{restorePreview._meta?.exportedAt ? new Date(restorePreview._meta.exportedAt).toLocaleString('zh-CN') : '-'}</span>
                     </div>
+                    {restorePreview.recipeVersions?.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        <div className="text-xs font-semibold" style={{ color: 'var(--paper)' }}>版本详情：</div>
+                        {restorePreview.recipeVersions.map((v: any) => (
+                          <div key={v.id} className="text-xs" style={{ color: 'var(--smoke-light)' }}>
+                            第{v.versionNumber}版 {v.locked ? '🔒 锁定' : '✏️ 草稿'} — {v.steps?.length || 0}步 / {v.ingredients?.length || 0}种食材
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {restorePreview._meta?.type === 'delivery-package' && restorePreview.readme && (
+                      <div className="mt-2 p-2 rounded text-xs" style={{ background: 'rgba(184,134,11,0.08)', border: '1px solid rgba(184,134,11,0.2)' }}>
+                        <div className="font-semibold" style={{ color: 'var(--bronze)' }}>交付包信息</div>
+                        <div style={{ color: 'var(--smoke-light)' }}>打包范围：{restorePreview.readme.scope?.versions || '全部'}</div>
+                        <div style={{ color: 'var(--smoke-light)' }}>含原始素材：{restorePreview.readme.scope?.includeMaterials ? '是' : '否'}</div>
+                        <div style={{ color: 'var(--smoke-light)' }}>含评分卡：{restorePreview.readme.scope?.includeScoreCard ? '是' : '否'}</div>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="text-xs mb-2 block font-semibold" style={{ color: 'var(--paper)' }}>恢复方式</label>
@@ -411,13 +510,46 @@ ${allDone ? '✔ 所有交付项齐全，可签收' : '⚠ 部分交付项缺失
 
       {showChecklist && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={() => setShowChecklist(false)}>
-          <div className="paper-card p-6 w-[600px] max-h-[80vh] overflow-y-auto animate-fade-in" onClick={e => e.stopPropagation()}>
-            <h2 className="font-calligraphy text-xl mb-4" style={{ color: 'var(--paper)' }}>
-              <ClipboardCheck size={20} className="inline mr-2" />交付清单
-            </h2>
+          <div className="paper-card p-6 w-[640px] max-h-[85vh] overflow-y-auto animate-fade-in" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-calligraphy text-xl" style={{ color: 'var(--paper)' }}>
+                <ClipboardCheck size={20} className="inline mr-2" />交付签收台账
+              </h2>
+              <div className="flex gap-2">
+                <button onClick={() => setShowAuditLog(v => !v)} className="ink-btn ink-btn-ghost text-xs">
+                  <Clock size={12} /> {showAuditLog ? '收起日志' : '审计日志'}
+                </button>
+                <button onClick={() => setShowChecklist(false)} className="ink-btn ink-btn-ghost text-xs">✕</button>
+              </div>
+            </div>
+
+            {checklistProject && (
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                <div className="p-3 rounded text-center" style={{ background: 'rgba(184,134,11,0.08)', border: '1px solid rgba(184,134,11,0.15)' }}>
+                  <div className="text-xs" style={{ color: 'var(--smoke-light)' }}>最近备份</div>
+                  <div className="text-sm font-semibold mt-1" style={{ color: checklistData.lastBackupAt ? 'var(--bamboo)' : 'var(--vermilion)' }}>
+                    {checklistData.lastBackupAt ? new Date(checklistData.lastBackupAt).toLocaleString('zh-CN') : '未备份'}
+                  </div>
+                </div>
+                <div className="p-3 rounded text-center" style={{ background: 'rgba(45,106,79,0.08)', border: '1px solid rgba(45,106,79,0.15)' }}>
+                  <div className="text-xs" style={{ color: 'var(--smoke-light)' }}>最近交付包</div>
+                  <div className="text-sm font-semibold mt-1" style={{ color: checklistData.lastPackageExportAt ? 'var(--bamboo)' : 'var(--vermilion)' }}>
+                    {checklistData.lastPackageExportAt ? new Date(checklistData.lastPackageExportAt).toLocaleString('zh-CN') : '未导出'}
+                  </div>
+                </div>
+                <div className="p-3 rounded text-center" style={{ background: checklistData.confirmationSignedAt ? 'rgba(45,106,79,0.08)' : 'rgba(192,57,43,0.06)', border: checklistData.confirmationSignedAt ? '1px solid rgba(45,106,79,0.15)' : '1px solid rgba(192,57,43,0.15)' }}>
+                  <div className="text-xs" style={{ color: 'var(--smoke-light)' }}>签收状态</div>
+                  <div className="text-sm font-semibold mt-1" style={{ color: checklistData.confirmationSignedAt ? 'var(--bamboo)' : 'var(--vermilion)' }}>
+                    {checklistData.confirmationSignedAt ? '✔ 已签收' : '未签收'}
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-2 mb-4">
               {DELIVERABLES.map(item => {
                 const ok = item.check(checklistData);
+                const isReview = item.key === 'reviews';
                 return (
                   <div key={item.key} className="flex items-center gap-3 px-4 py-3 rounded cursor-pointer transition-all hover:bg-paper/5"
                     style={{ border: `1px solid ${ok ? 'rgba(45,106,79,0.2)' : 'rgba(192,57,43,0.2)'}` }}
@@ -436,6 +568,13 @@ ${allDone ? '✔ 所有交付项齐全，可签收' : '⚠ 部分交付项缺失
                     <div className="flex-1">
                       <div className="text-sm font-semibold" style={{ color: 'var(--paper)' }}>{item.label}</div>
                       <div className="text-xs" style={{ color: 'var(--smoke-light)' }}>{item.detail(checklistData)}</div>
+                      {isReview && checklistData.reviewInvited !== undefined && (
+                        <div className="flex gap-3 mt-1">
+                          <span className="text-xs" style={{ color: 'var(--smoke-light)' }}>已邀请 {checklistData.reviewInvited}</span>
+                          <span className="text-xs" style={{ color: 'var(--bronze)' }}>已发放 {checklistData.reviewIssued}</span>
+                          <span className="text-xs" style={{ color: 'var(--bamboo-light)' }}>已评分 {checklistData.reviewScored}</span>
+                        </div>
+                      )}
                     </div>
                     {!ok && (
                       <span className="flex items-center gap-1 text-xs" style={{ color: 'var(--vermilion)' }}>
@@ -447,6 +586,30 @@ ${allDone ? '✔ 所有交付项齐全，可签收' : '⚠ 部分交付项缺失
                 );
               })}
             </div>
+
+            {showAuditLog && checklistProject && (
+              <div className="mb-4 p-3 rounded animate-fade-in" style={{ background: 'rgba(245,240,232,0.04)', border: '1px solid rgba(245,240,232,0.1)' }}>
+                <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--paper)' }}>
+                  <Clock size={14} className="inline mr-1" />审计日志
+                </h3>
+                {(checklistProject.auditLog || []).length === 0 ? (
+                  <p className="text-xs" style={{ color: 'var(--smoke)' }}>暂无操作记录</p>
+                ) : (
+                  <div className="space-y-2">
+                    {[...(checklistProject.auditLog || [])].reverse().map(entry => (
+                      <div key={entry.id} className="flex items-start gap-2 text-xs px-2 py-1.5 rounded" style={{ background: 'rgba(245,240,232,0.03)' }}>
+                        <span className="shrink-0 font-semibold" style={{ color: 'var(--bronze)' }}>
+                          {AUDIT_ACTION_LABELS[entry.action] || entry.action}
+                        </span>
+                        <span className="flex-1" style={{ color: 'var(--smoke-light)' }}>{entry.detail}</span>
+                        <span className="shrink-0" style={{ color: 'var(--smoke)' }}>{new Date(entry.timestamp).toLocaleString('zh-CN')}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex gap-3 justify-end border-t pt-4" style={{ borderColor: 'rgba(245,240,232,0.1)' }}>
               <button onClick={handleExportConfirmation} className="ink-btn ink-btn-secondary">
                 <FileText size={14} /> 导出交付确认单

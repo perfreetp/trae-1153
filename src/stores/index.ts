@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Project, RecipeVersion, RecipeStep, Ingredient, Trial, Review, Material, Archive } from '@/types';
+import type { Project, RecipeVersion, RecipeStep, Ingredient, Trial, Review, Material, Archive, AuditLogEntry } from '@/types';
 import { getAllProjects, saveProject, deleteProject as dbDeleteProject, getRecipeVersions, saveRecipeVersion, getTrials, saveTrial, getReviews, saveReview, getMaterials, saveMaterial, deleteMaterial as dbDeleteMaterial, getArchive, saveArchive } from '@/lib/database';
 
 interface ProjectStore {
@@ -41,6 +41,8 @@ interface ProjectStore {
 
   loadArchive: () => Promise<void>;
   saveArchiveData: (archive: Archive) => Promise<void>;
+  addAuditLog: (projectId: string, action: string, detail: string, operator?: string) => Promise<void>;
+  updateProjectField: (projectId: string, fields: Partial<Project>) => Promise<void>;
 }
 
 function generateId(): string {
@@ -259,6 +261,41 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   saveArchiveData: async (archive) => {
     await saveArchive(archive);
     set({ archive });
+  },
+
+  addAuditLog: async (projectId, action, detail, operator = '操作人') => {
+    const { projects } = get();
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return;
+    const entry: AuditLogEntry = {
+      id: generateId(),
+      action,
+      detail,
+      operator,
+      timestamp: new Date().toISOString(),
+    };
+    const updated: Project = {
+      ...project,
+      auditLog: [...(project.auditLog || []), entry],
+      updatedAt: new Date().toISOString(),
+    };
+    await saveProject(updated);
+    set(state => ({
+      projects: state.projects.map(p => p.id === projectId ? updated : p),
+      currentProject: state.currentProject?.id === projectId ? updated : state.currentProject,
+    }));
+  },
+
+  updateProjectField: async (projectId, fields) => {
+    const { projects } = get();
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return;
+    const updated: Project = { ...project, ...fields, updatedAt: new Date().toISOString() };
+    await saveProject(updated);
+    set(state => ({
+      projects: state.projects.map(p => p.id === projectId ? updated : p),
+      currentProject: state.currentProject?.id === projectId ? updated : state.currentProject,
+    }));
   },
 }));
 

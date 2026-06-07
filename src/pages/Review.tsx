@@ -29,7 +29,7 @@ function getReviewerStatus(r: Review): ReviewerStatus {
 }
 
 export default function ReviewPage() {
-  const { currentProject, currentVersion, recipeVersions, reviews, addReview, updateReview, lockVersion, selectVersion } = useProjectStore();
+  const { currentProject, currentVersion, recipeVersions, reviews, addReview, updateReview, lockVersion, selectVersion, addAuditLog } = useProjectStore();
   const addToast = useUIStore(s => s.addToast);
 
   const [reviewerName, setReviewerName] = useState('');
@@ -72,6 +72,9 @@ export default function ReviewPage() {
     const reviewer = versionReviews.find(r => r.id === reviewerId);
     if (!reviewer || reviewer.scoreCardIssued) return;
     await updateReview({ ...reviewer, scoreCardIssued: true });
+    if (currentProject) {
+      await addAuditLog(currentProject.id, 'issue_scorecard', `发放评分卡给 ${reviewer.reviewerName}`);
+    }
     addToast(`评分卡已发放给 ${reviewer.reviewerName}`, 'success');
   };
 
@@ -80,7 +83,12 @@ export default function ReviewPage() {
     for (const r of unissued) {
       await updateReview({ ...r, scoreCardIssued: true });
     }
-    if (unissued.length > 0) addToast(`已向 ${unissued.length} 位评委发放评分卡`, 'success');
+    if (unissued.length > 0) {
+      addToast(`已向 ${unissued.length} 位评委发放评分卡`, 'success');
+      if (currentProject) {
+        await addAuditLog(currentProject.id, 'issue_scorecard', `批量发放评分卡给 ${unissued.length} 位评委`);
+      }
+    }
     else addToast('所有评委已发放或已评分', 'info');
   };
 
@@ -109,6 +117,9 @@ export default function ReviewPage() {
   const handleLock = async () => {
     await lockVersion();
     setConfirmLock(false);
+    if (currentProject) {
+      await addAuditLog(currentProject.id, 'lock_version', `锁定第${currentVersion?.versionNumber || '?'}版配方`);
+    }
     addToast('配方已锁定', 'success');
   };
 

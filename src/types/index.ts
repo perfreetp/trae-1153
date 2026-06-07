@@ -1,3 +1,11 @@
+export interface AuditLogEntry {
+  id: string;
+  action: string;
+  detail: string;
+  operator: string;
+  timestamp: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -5,6 +13,10 @@ export interface Project {
   createdAt: string;
   updatedAt: string;
   status: 'draft' | 'in_progress' | 'review' | 'completed' | 'archived';
+  lastBackupAt?: string;
+  lastPackageExportAt?: string;
+  confirmationSignedAt?: string;
+  auditLog?: AuditLogEntry[];
 }
 
 export interface Material {

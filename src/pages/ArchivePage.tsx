@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { Archive, Upload, FileText, Download, Package, Eye, Trash2, BookOpen, CheckCircle, Settings } from 'lucide-react';
+import { Archive, Upload, FileText, Download, Package, Eye, Trash2, BookOpen, CheckCircle, Settings, AlertTriangle } from 'lucide-react';
 import { useProjectStore, useUIStore } from '@/stores';
 import { generateId } from '@/lib/ingredientDict';
 import type { ArchiveDoc } from '@/types';
@@ -12,7 +12,7 @@ const TYPE_BADGE: Record<ArchiveDoc['type'], { label: string; color: string }> =
 };
 
 export default function ArchivePage() {
-  const { currentProject, currentVersion, archive, recipeVersions, materials, trials, reviews, saveArchiveData } = useProjectStore();
+  const { currentProject, currentVersion, archive, recipeVersions, materials, trials, reviews, saveArchiveData, addAuditLog, updateProjectField } = useProjectStore();
   const addToast = useUIStore(s => s.addToast);
   const [docType, setDocType] = useState<ArchiveDoc['type']>('authorization');
   const [dragActive, setDragActive] = useState(false);
@@ -26,6 +26,8 @@ export default function ArchivePage() {
   const [packIncludeScoreCard, setPackIncludeScoreCard] = useState(true);
   const [packIncludeConfirmation, setPackIncludeConfirmation] = useState(true);
   const [showPackSettings, setShowPackSettings] = useState(false);
+  const [importPreview, setImportPreview] = useState<any>(null);
+  const [importMode, setImportMode] = useState<'overwrite' | 'new'>('new');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -199,16 +201,28 @@ ${photoSection}
     a.click();
     URL.revokeObjectURL(url);
     await saveArchiveData({ ...base, lectureExported: true });
+    if (currentProject) {
+      await addAuditLog(currentProject.id, 'export_lecture', `导出第${selectedVersion.versionNumber}版讲义`);
+    }
     addToast('教学讲义已导出下载', 'success');
   };
 
-  const handlePackageProject = () => {
+  const handlePackageProject = async () => {
     if (!currentProject) return;
     const lockedVersions = recipeVersions.filter(v => v.locked);
-    const targetVersions = packOnlyLocked && lockedVersions.length > 0 ? lockedVersions : recipeVersions;
+    if (packOnlyLocked && lockedVersions.length === 0) {
+      addToast('当前没有锁定版本，无法只打包锁定版本。请先锁定配方或取消"仅打包锁定版本"', 'error');
+      return;
+    }
+    const targetVersions = packOnlyLocked ? lockedVersions : recipeVersions;
     const versionIds = new Set(targetVersions.map(v => v.id));
     const targetTrials = trials.filter(t => versionIds.has(t.recipeVersionId));
-    const targetReviews = reviews.filter(r => versionIds.has(r.recipeVersionId));
+    const targetReviews = packIncludeScoreCard
+      ? reviews.filter(r => versionIds.has(r.recipeVersionId))
+      : reviews.filter(r => versionIds.has(r.recipeVersionId) && !r.scored).length > 0
+        ? []
+        : [];
+    const actualReviews = packIncludeScoreCard ? reviews.filter(r => versionIds.has(r.recipeVersionId)) : [];
     const packedMaterials = packIncludeMaterials ? materials : [];
     const readme = {
       projectName: currentProject.name,
@@ -229,18 +243,18 @@ ${photoSection}
         })),
         materials: packedMaterials.length,
         trials: targetTrials.length,
-        reviews: targetReviews.length,
+        reviews: actualReviews.length,
         archiveDocs: docs.length,
       },
     };
     const data = {
-      _meta: { exportedAt: new Date().toISOString(), app: '古味寻踪', version: '3.0', type: 'delivery-package' },
+      _meta: { exportedAt: new Date().toISOString(), app: '古味寻踪', version: '4.0', type: 'delivery-package' },
       readme,
       project: currentProject,
       materials: packedMaterials,
       recipeVersions: targetVersions,
       trials: targetTrials,
-      reviews: targetReviews,
+      reviews: actualReviews,
       archive: archive || null,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -251,40 +265,55 @@ ${photoSection}
     a.download = `${currentProject.name}-交付包-${date}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    await updateProjectField(currentProject.id, { lastPackageExportAt: new Date().toISOString() });
+    await addAuditLog(currentProject.id, 'package_delivery', `打包交付（${packOnlyLocked ? '仅锁定版' : '全部版'}，${packIncludeMaterials ? '含素材' : '不含素材'}，${packIncludeScoreCard ? '含评分卡' : '不含评分卡'}）`);
     addToast('交付包已打包下载', 'success');
   };
 
-  const handleImportArchive = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !currentProject) return;
+    if (!file) return;
     try {
       const text = await file.text();
       const data = JSON.parse(text);
       if (!data._meta || data._meta.app !== '古味寻踪') {
         addToast('无效的归档文件', 'error');
+        e.target.value = '';
         return;
       }
-      const { saveProject, saveRecipeVersion: srv, saveTrial: st, saveReview: sr, saveMaterial: sm, saveArchive: sa, deleteProjectData } = await import('@/lib/database');
-      const pid = currentProject.id;
+      setImportPreview(data);
+      setImportMode('new');
+    } catch {
+      addToast('读取文件失败', 'error');
+    }
+    e.target.value = '';
+  };
+
+  const handleImportConfirm = async () => {
+    if (!importPreview || !currentProject) return;
+    const { saveProject, saveRecipeVersion: srv, saveTrial: st, saveReview: sr, saveMaterial: sm, saveArchive: sa, deleteProjectData } = await import('@/lib/database');
+    const pid = currentProject.id;
+    try {
       await deleteProjectData(pid);
-      await saveProject({ ...data.project, id: pid });
       const versionIdMap: Record<string, string> = {};
-      if (data.recipeVersions) {
-        for (const v of data.recipeVersions) {
+      await saveProject({ ...importPreview.project, id: pid });
+      if (importPreview.recipeVersions) {
+        for (const v of importPreview.recipeVersions) {
           const newVid = generateId();
           versionIdMap[v.id] = newVid;
           await srv({ ...v, id: newVid, projectId: pid });
         }
       }
-      if (data.materials) for (const m of data.materials) await sm({ ...m, id: generateId(), projectId: pid });
-      if (data.trials) for (const t of data.trials) await st({ ...t, id: generateId(), projectId: pid, recipeVersionId: versionIdMap[t.recipeVersionId] || t.recipeVersionId });
-      if (data.reviews) for (const r of data.reviews) await sr({ ...r, id: generateId(), projectId: pid, recipeVersionId: versionIdMap[r.recipeVersionId] || r.recipeVersionId });
-      if (data.archive) await sa({ ...data.archive, id: generateId(), projectId: pid });
+      if (importPreview.materials) for (const m of importPreview.materials) await sm({ ...m, id: generateId(), projectId: pid });
+      if (importPreview.trials) for (const t of importPreview.trials) await st({ ...t, id: generateId(), projectId: pid, recipeVersionId: versionIdMap[t.recipeVersionId] || t.recipeVersionId });
+      if (importPreview.reviews) for (const r of importPreview.reviews) await sr({ ...r, id: generateId(), projectId: pid, recipeVersionId: versionIdMap[r.recipeVersionId] || r.recipeVersionId });
+      if (importPreview.archive) await sa({ ...importPreview.archive, id: generateId(), projectId: pid });
+      await addAuditLog(pid, 'restore_backup', `导入还原：${importPreview.project?.name || '未知'}`);
       addToast('归档数据已导入还原（旧数据已清理，版本已重映射）', 'success');
+      setImportPreview(null);
     } catch {
-      addToast('导入失败：文件格式错误', 'error');
+      addToast('导入失败', 'error');
     }
-    e.target.value = '';
   };
 
   if (!currentProject) {
@@ -483,6 +512,11 @@ ${photoSection}
         <p className="text-sm" style={{ color: 'var(--smoke-light)' }}>
           按需选择打包范围，导出含完整附件和目录说明的交付包。重新导入后可还原为可继续查看的项目。
         </p>
+        {packOnlyLocked && recipeVersions.filter(v => v.locked).length === 0 && (
+          <div className="flex items-center gap-2 p-3 rounded text-sm" style={{ background: 'rgba(192,57,43,0.08)', border: '1px solid rgba(192,57,43,0.2)', color: 'var(--vermilion)' }}>
+            <AlertTriangle size={14} /> 当前没有锁定版本，勾选"仅打包锁定版本"将导出空的锁定版本说明，请先锁定配方或取消此选项
+          </div>
+        )}
         <div className="flex gap-3 items-center flex-wrap">
           <button onClick={() => setShowPackSettings(v => !v)} className="ink-btn ink-btn-ghost text-sm">
             <Settings size={14} /> 打包设置
@@ -493,7 +527,7 @@ ${photoSection}
           <button onClick={() => importInputRef.current?.click()} className="ink-btn ink-btn-ghost">
             <Upload size={16} /> 导入还原
           </button>
-          <input ref={importInputRef} type="file" accept=".json" className="hidden" onChange={handleImportArchive} />
+          <input ref={importInputRef} type="file" accept=".json" className="hidden" onChange={handleImportFileSelect} />
         </div>
         {showPackSettings && (
           <div className="p-4 rounded space-y-3 animate-fade-in" style={{ background: 'rgba(245,240,232,0.04)', border: '1px solid rgba(245,240,232,0.1)' }}>
@@ -516,6 +550,52 @@ ${photoSection}
           </div>
         )}
       </section>
+
+      {importPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={() => setImportPreview(null)}>
+          <div className="paper-card p-6 w-[520px] max-h-[80vh] overflow-y-auto animate-fade-in" onClick={e => e.stopPropagation()}>
+            <h2 className="font-calligraphy text-xl mb-4" style={{ color: 'var(--paper)' }}>
+              <Eye size={18} className="inline mr-2" />导入预览
+            </h2>
+            <div className="p-3 rounded text-sm mb-4" style={{ background: 'rgba(245,240,232,0.06)', border: '1px solid rgba(245,240,232,0.1)' }}>
+              <div className="font-bold mb-2" style={{ color: 'var(--paper)' }}>{importPreview.project?.name}</div>
+              <div className="grid grid-cols-3 gap-2 text-xs" style={{ color: 'var(--smoke-light)' }}>
+                <span>素材：{importPreview.materials?.length ?? 0} 份</span>
+                <span>版本：{importPreview.recipeVersions?.length ?? 0} 个</span>
+                <span>试做：{importPreview.trials?.length ?? 0} 轮</span>
+                <span>评审：{importPreview.reviews?.length ?? 0} 条</span>
+                <span>归档：{importPreview.archive?.documents?.length ?? 0} 份</span>
+                <span>类型：{importPreview._meta?.type === 'delivery-package' ? '交付包' : '备份'}</span>
+              </div>
+              {importPreview.recipeVersions?.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  <div className="text-xs font-semibold" style={{ color: 'var(--paper)' }}>版本详情：</div>
+                  {importPreview.recipeVersions.map((v: any) => (
+                    <div key={v.id} className="text-xs" style={{ color: 'var(--smoke-light)' }}>
+                      第{v.versionNumber}版 {v.locked ? '🔒 锁定' : '✏️ 草稿'} — {v.steps?.length || 0}步 / {v.ingredients?.length || 0}种食材
+                    </div>
+                  ))}
+                </div>
+              )}
+              {importPreview._meta?.type === 'delivery-package' && importPreview.readme && (
+                <div className="mt-2 p-2 rounded text-xs" style={{ background: 'rgba(184,134,11,0.08)', border: '1px solid rgba(184,134,11,0.2)' }}>
+                  <div className="font-semibold" style={{ color: 'var(--bronze)' }}>交付包打包范围</div>
+                  <div style={{ color: 'var(--smoke-light)' }}>版本：{importPreview.readme.scope?.versions || '全部'}</div>
+                  <div style={{ color: 'var(--smoke-light)' }}>含原始素材：{importPreview.readme.scope?.includeMaterials ? '是' : '否'}</div>
+                  <div style={{ color: 'var(--smoke-light)' }}>含评分卡：{importPreview.readme.scope?.includeScoreCard ? '是' : '否'}</div>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-1 mb-3 text-xs" style={{ color: 'var(--vermilion)' }}>
+              <AlertTriangle size={12} /> 导入将清除当前项目已有数据并写入导入内容，所有版本获得新ID
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setImportPreview(null)} className="ink-btn ink-btn-ghost">取消</button>
+              <button onClick={handleImportConfirm} className="ink-btn ink-btn-primary">确认导入</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
