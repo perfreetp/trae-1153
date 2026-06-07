@@ -1,0 +1,211 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --ink-black: #1a1a2e;
+    --ink-deep: #0f0f1a;
+    --vermilion: #c0392b;
+    --vermilion-light: #e74c3c;
+    --bamboo: #2d6a4f;
+    --bamboo-light: #40916c;
+    --paper: #f5f0e8;
+    --paper-dark: #e8e0d0;
+    --bronze: #b8860b;
+    --bronze-light: #daa520;
+    --smoke: #4a4a5a;
+    --smoke-light: #6a6a7a;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--smoke) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: var(--smoke);
+    border-radius: 3px;
+  }
+
+  body {
+    font-family: "Noto Serif SC", serif;
+    background-color: var(--ink-deep);
+    color: var(--paper);
+    line-height: 1.6;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .font-calligraphy {
+    font-family: "Ma Shan Zheng", cursive;
+  }
+
+  .font-serif {
+    font-family: "Noto Serif SC", serif;
+  }
+}
+
+@layer components {
+  .paper-texture {
+    background-image:
+      url("data:image/svg+xml,%3Csvg width='100' height='100' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+  }
+
+  .ink-shadow {
+    box-shadow:
+      0 4px 6px -1px rgba(0, 0, 0, 0.3),
+      0 2px 4px -2px rgba(0, 0, 0, 0.2);
+  }
+
+  .ink-shadow-hover:hover {
+    box-shadow:
+      0 10px 15px -3px rgba(0, 0, 0, 0.4),
+      0 4px 6px -4px rgba(0, 0, 0, 0.3);
+    transform: translateY(-1px);
+  }
+
+  .seal-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 8px;
+    border: 2px solid var(--vermilion);
+    color: var(--vermilion);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    transform: rotate(-2deg);
+  }
+
+  .seal-badge-success {
+    border-color: var(--bamboo);
+    color: var(--bamboo);
+  }
+
+  .ink-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    border: none;
+    outline: none;
+  }
+
+  .ink-btn-primary {
+    background-color: var(--vermilion);
+    color: var(--paper);
+  }
+
+  .ink-btn-primary:hover {
+    background-color: var(--vermilion-light);
+    box-shadow: 0 0 12px rgba(192, 57, 43, 0.4);
+  }
+
+  .ink-btn-secondary {
+    background-color: var(--bamboo);
+    color: var(--paper);
+  }
+
+  .ink-btn-secondary:hover {
+    background-color: var(--bamboo-light);
+    box-shadow: 0 0 12px rgba(45, 106, 79, 0.4);
+  }
+
+  .ink-btn-ghost {
+    background-color: transparent;
+    color: var(--paper);
+    border: 1px solid var(--smoke);
+  }
+
+  .ink-btn-ghost:hover {
+    border-color: var(--bronze);
+    color: var(--bronze-light);
+  }
+
+  .paper-card {
+    background: rgba(245, 240, 232, 0.06);
+    border: 1px solid rgba(245, 240, 232, 0.1);
+    border-radius: 8px;
+    backdrop-filter: blur(4px);
+  }
+
+  .paper-card:hover {
+    background: rgba(245, 240, 232, 0.09);
+    border-color: rgba(245, 240, 232, 0.16);
+  }
+
+  .ink-input {
+    background: rgba(245, 240, 232, 0.06);
+    border: 1px solid rgba(245, 240, 232, 0.15);
+    border-radius: 4px;
+    padding: 8px 12px;
+    color: var(--paper);
+    font-family: "Noto Serif SC", serif;
+    font-size: 0.875rem;
+    outline: none;
+    transition: border-color 0.2s;
+    width: 100%;
+  }
+
+  .ink-input:focus {
+    border-color: var(--bronze);
+    box-shadow: 0 0 0 2px rgba(184, 134, 11, 0.15);
+  }
+
+  .ink-input::placeholder {
+    color: var(--smoke-light);
+  }
+
+  .drop-zone {
+    border: 2px dashed rgba(245, 240, 232, 0.2);
+    border-radius: 8px;
+    transition: all 0.3s;
+  }
+
+  .drop-zone:hover,
+  .drop-zone.active {
+    border-color: var(--bronze);
+    background: rgba(184, 134, 11, 0.05);
+  }
+}
+
+@keyframes sealStamp {
+  0% { transform: scale(2) rotate(-15deg); opacity: 0; }
+  60% { transform: scale(0.9) rotate(-2deg); opacity: 1; }
+  100% { transform: scale(1) rotate(-2deg); opacity: 1; }
+}
+
+@keyframes inkDrop {
+  0% { transform: scale(0); opacity: 1; }
+  100% { transform: scale(1); opacity: 0; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-seal {
+  animation: sealStamp 0.4s ease-out forwards;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
