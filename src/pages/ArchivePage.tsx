@@ -21,6 +21,11 @@ export default function ArchivePage() {
   const [includePhotos, setIncludePhotos] = useState(true);
   const [includeScores, setIncludeScores] = useState(true);
   const [showLectureSettings, setShowLectureSettings] = useState(false);
+  const [packOnlyLocked, setPackOnlyLocked] = useState(false);
+  const [packIncludeMaterials, setPackIncludeMaterials] = useState(true);
+  const [packIncludeScoreCard, setPackIncludeScoreCard] = useState(true);
+  const [packIncludeConfirmation, setPackIncludeConfirmation] = useState(true);
+  const [showPackSettings, setShowPackSettings] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -199,23 +204,54 @@ ${photoSection}
 
   const handlePackageProject = () => {
     if (!currentProject) return;
+    const lockedVersions = recipeVersions.filter(v => v.locked);
+    const targetVersions = packOnlyLocked && lockedVersions.length > 0 ? lockedVersions : recipeVersions;
+    const versionIds = new Set(targetVersions.map(v => v.id));
+    const targetTrials = trials.filter(t => versionIds.has(t.recipeVersionId));
+    const targetReviews = reviews.filter(r => versionIds.has(r.recipeVersionId));
+    const packedMaterials = packIncludeMaterials ? materials : [];
+    const readme = {
+      projectName: currentProject.name,
+      projectDescription: currentProject.description,
+      exportedAt: new Date().toISOString(),
+      scope: {
+        versions: packOnlyLocked ? '仅锁定版本' : '全部版本',
+        includeMaterials: packIncludeMaterials,
+        includeScoreCard: packIncludeScoreCard,
+        includeConfirmation: packIncludeConfirmation,
+      },
+      contents: {
+        recipeVersions: targetVersions.map(v => ({
+          versionNumber: v.versionNumber,
+          locked: v.locked,
+          steps: v.steps.length,
+          ingredients: v.ingredients.length,
+        })),
+        materials: packedMaterials.length,
+        trials: targetTrials.length,
+        reviews: targetReviews.length,
+        archiveDocs: docs.length,
+      },
+    };
     const data = {
-      _meta: { exportedAt: new Date().toISOString(), app: '古味寻踪' },
+      _meta: { exportedAt: new Date().toISOString(), app: '古味寻踪', version: '3.0', type: 'delivery-package' },
+      readme,
       project: currentProject,
-      materials,
-      recipeVersions,
-      trials,
-      reviews,
-      archive,
+      materials: packedMaterials,
+      recipeVersions: targetVersions,
+      trials: targetTrials,
+      reviews: targetReviews,
+      archive: archive || null,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${currentProject.name}-归档包.json`;
+    const date = new Date().toISOString().slice(0, 10);
+    a.download = `${currentProject.name}-交付包-${date}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    addToast('项目资料已打包下载（含附件数据）', 'success');
+    addToast('交付包已打包下载', 'success');
   };
 
   const handleImportArchive = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -228,14 +264,23 @@ ${photoSection}
         addToast('无效的归档文件', 'error');
         return;
       }
-      const { saveProject, saveRecipeVersion: srv, saveTrial: st, saveReview: sr, saveMaterial: sm, saveArchive: sa } = await import('@/lib/database');
-      if (data.project) await saveProject({ ...data.project, id: currentProject.id });
-      if (data.materials) for (const m of data.materials) await sm({ ...m, projectId: currentProject.id });
-      if (data.recipeVersions) for (const v of data.recipeVersions) await srv({ ...v, projectId: currentProject.id });
-      if (data.trials) for (const t of data.trials) await st({ ...t, projectId: currentProject.id });
-      if (data.reviews) for (const r of data.reviews) await sr({ ...r, projectId: currentProject.id });
-      if (data.archive) await sa({ ...data.archive, projectId: currentProject.id });
-      addToast('归档数据已导入，请刷新页面', 'success');
+      const { saveProject, saveRecipeVersion: srv, saveTrial: st, saveReview: sr, saveMaterial: sm, saveArchive: sa, deleteProjectData } = await import('@/lib/database');
+      const pid = currentProject.id;
+      await deleteProjectData(pid);
+      await saveProject({ ...data.project, id: pid });
+      const versionIdMap: Record<string, string> = {};
+      if (data.recipeVersions) {
+        for (const v of data.recipeVersions) {
+          const newVid = generateId();
+          versionIdMap[v.id] = newVid;
+          await srv({ ...v, id: newVid, projectId: pid });
+        }
+      }
+      if (data.materials) for (const m of data.materials) await sm({ ...m, id: generateId(), projectId: pid });
+      if (data.trials) for (const t of data.trials) await st({ ...t, id: generateId(), projectId: pid, recipeVersionId: versionIdMap[t.recipeVersionId] || t.recipeVersionId });
+      if (data.reviews) for (const r of data.reviews) await sr({ ...r, id: generateId(), projectId: pid, recipeVersionId: versionIdMap[r.recipeVersionId] || r.recipeVersionId });
+      if (data.archive) await sa({ ...data.archive, id: generateId(), projectId: pid });
+      addToast('归档数据已导入还原（旧数据已清理，版本已重映射）', 'success');
     } catch {
       addToast('导入失败：文件格式错误', 'error');
     }
@@ -433,26 +478,43 @@ ${photoSection}
 
       <section className="paper-card p-5 space-y-4">
         <div className="flex items-center gap-2 text-lg font-semibold" style={{ color: 'var(--bronze)' }}>
-          <Package size={20} /> 项目打包
+          <Package size={20} /> 交付包打包
         </div>
         <p className="text-sm" style={{ color: 'var(--smoke-light)' }}>
-          一键打包项目全部数据（含附件文件内容），下载为 JSON 文件。可重新导入恢复所有信息。
+          按需选择打包范围，导出含完整附件和目录说明的交付包。重新导入后可还原为可继续查看的项目。
         </p>
-        <div className="flex gap-3">
+        <div className="flex gap-3 items-center flex-wrap">
+          <button onClick={() => setShowPackSettings(v => !v)} className="ink-btn ink-btn-ghost text-sm">
+            <Settings size={14} /> 打包设置
+          </button>
           <button onClick={handlePackageProject} className="ink-btn ink-btn-primary">
-            <Archive size={16} /> 一键打包
+            <Archive size={16} /> 打包交付
           </button>
           <button onClick={() => importInputRef.current?.click()} className="ink-btn ink-btn-ghost">
-            <Upload size={16} /> 导入归档
+            <Upload size={16} /> 导入还原
           </button>
-          <input
-            ref={importInputRef}
-            type="file"
-            accept=".json"
-            className="hidden"
-            onChange={handleImportArchive}
-          />
+          <input ref={importInputRef} type="file" accept=".json" className="hidden" onChange={handleImportArchive} />
         </div>
+        {showPackSettings && (
+          <div className="p-4 rounded space-y-3 animate-fade-in" style={{ background: 'rgba(245,240,232,0.04)', border: '1px solid rgba(245,240,232,0.1)' }}>
+            <label className="flex items-center gap-2 cursor-pointer text-sm" style={{ color: 'var(--paper)' }}>
+              <input type="checkbox" checked={packOnlyLocked} onChange={e => setPackOnlyLocked(e.target.checked)} className="accent-[#b8860b] w-4 h-4" />
+              仅打包最终锁定版本（不含未锁定的草稿版本）
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm" style={{ color: 'var(--paper)' }}>
+              <input type="checkbox" checked={packIncludeMaterials} onChange={e => setPackIncludeMaterials(e.target.checked)} className="accent-[#b8860b] w-4 h-4" />
+              包含原始素材（照片和口述文本）
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm" style={{ color: 'var(--paper)' }}>
+              <input type="checkbox" checked={packIncludeScoreCard} onChange={e => setPackIncludeScoreCard(e.target.checked)} className="accent-[#b8860b] w-4 h-4" />
+              包含评分卡和评审数据
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm" style={{ color: 'var(--paper)' }}>
+              <input type="checkbox" checked={packIncludeConfirmation} onChange={e => setPackIncludeConfirmation(e.target.checked)} className="accent-[#b8860b] w-4 h-4" />
+              包含交付确认单
+            </label>
+          </div>
+        )}
       </section>
     </div>
   );

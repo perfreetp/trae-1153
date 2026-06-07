@@ -80,6 +80,7 @@ export interface Review {
   comments: string;
   reviewedAt: string;
   scored: boolean;
+  scoreCardIssued: boolean;
 }
 
 export interface ArchiveDoc {

@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Star, Lock, Unlock, Download, Users, GitCompare, FileText, TrendingUp } from 'lucide-react';
+import { Star, Lock, Unlock, Download, Users, GitCompare, FileText, TrendingUp, Send } from 'lucide-react';
 import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Legend } from 'recharts';
 import html2canvas from 'html2canvas';
 import { useProjectStore, useUIStore } from '@/stores';
@@ -13,6 +13,20 @@ const DIMS: { key: keyof ReviewScore; label: string }[] = [
 ];
 
 const zeroScores = (): ReviewScore => ({ appearance: 0, aroma: 0, taste: 0, texture: 0, fidelity: 0 });
+
+type ReviewerStatus = 'invited' | 'card_issued' | 'scored';
+
+const STATUS_CONFIG: Record<ReviewerStatus, { label: string; color: string; bg: string }> = {
+  invited: { label: '已邀请', color: 'var(--smoke-light)', bg: 'rgba(138,138,150,0.12)' },
+  card_issued: { label: '已发放', color: 'var(--bronze)', bg: 'rgba(184,134,11,0.12)' },
+  scored: { label: '已评分', color: 'var(--bamboo-light)', bg: 'rgba(45,106,79,0.12)' },
+};
+
+function getReviewerStatus(r: Review): ReviewerStatus {
+  if (r.scored) return 'scored';
+  if (r.scoreCardIssued) return 'card_issued';
+  return 'invited';
+}
 
 export default function ReviewPage() {
   const { currentProject, currentVersion, recipeVersions, reviews, addReview, updateReview, lockVersion, selectVersion } = useProjectStore();
@@ -47,11 +61,27 @@ export default function ReviewPage() {
     const review: Review = {
       id: generateId(), projectId: currentProject.id, recipeVersionId: currentVersion.id,
       reviewerName: reviewerName.trim(), scores: zeroScores(), totalScore: 0, comments: '',
-      reviewedAt: new Date().toISOString(), scored: false,
+      reviewedAt: new Date().toISOString(), scored: false, scoreCardIssued: false,
     };
     await addReview(review);
     setReviewerName('');
     addToast(`已邀请评委: ${review.reviewerName}`, 'success');
+  };
+
+  const handleIssueCard = async (reviewerId: string) => {
+    const reviewer = versionReviews.find(r => r.id === reviewerId);
+    if (!reviewer || reviewer.scoreCardIssued) return;
+    await updateReview({ ...reviewer, scoreCardIssued: true });
+    addToast(`评分卡已发放给 ${reviewer.reviewerName}`, 'success');
+  };
+
+  const handleBatchIssueCards = async () => {
+    const unissued = versionReviews.filter(r => !r.scoreCardIssued && !r.scored);
+    for (const r of unissued) {
+      await updateReview({ ...r, scoreCardIssued: true });
+    }
+    if (unissued.length > 0) addToast(`已向 ${unissued.length} 位评委发放评分卡`, 'success');
+    else addToast('所有评委已发放或已评分', 'info');
   };
 
   const handleSelectReviewer = (id: string) => {
@@ -67,7 +97,7 @@ export default function ReviewPage() {
     const reviewer = versionReviews.find(r => r.id === selectedReviewerId);
     if (!reviewer) return;
     const updated: Review = {
-      ...reviewer, scores, totalScore, comments, reviewedAt: new Date().toISOString(), scored: true,
+      ...reviewer, scores, totalScore, comments, reviewedAt: new Date().toISOString(), scored: true, scoreCardIssued: true,
     };
     await updateReview(updated);
     setSelectedReviewerId('');
@@ -144,11 +174,15 @@ ${DIMS.map(d => `<div class="dim"><span class="dim-name">${d.label}</span><span 
     a.click();
     URL.revokeObjectURL(url);
     addToast('评分卡已导出（可打印给评委填写）', 'success');
+    handleBatchIssueCards();
   };
 
   const avgScore = scoredReviewers.length > 0
     ? (scoredReviewers.reduce((s, r) => s + r.totalScore, 0) / scoredReviewers.length).toFixed(1)
     : '暂无';
+
+  const issuedCount = versionReviews.filter(r => r.scoreCardIssued && !r.scored).length;
+  const invitedCount = versionReviews.filter(r => !r.scoreCardIssued && !r.scored).length;
 
   const versionAvgHistory = recipeVersions
     .sort((a, b) => a.versionNumber - b.versionNumber)
@@ -177,34 +211,42 @@ ${DIMS.map(d => `<div class="dim"><span class="dim-name">${d.label}</span><span 
         </div>
         {versionReviews.length > 0 && (
           <div className="space-y-2">
-            {versionReviews.map(r => (
-              <div key={r.id} className="flex items-center justify-between px-4 py-2 rounded bg-paper/5">
-                <div className="flex items-center gap-2">
-                  <span className="text-paper">{r.reviewerName}</span>
-                  {r.scored ? (
-                    <span className="text-xs px-2 py-0.5 rounded" style={{ background: 'rgba(45,106,79,0.15)', color: 'var(--bamboo-light)' }}>
-                      已评分
+            {versionReviews.map(r => {
+              const status = getReviewerStatus(r);
+              const cfg = STATUS_CONFIG[status];
+              return (
+                <div key={r.id} className="flex items-center justify-between px-4 py-2 rounded bg-paper/5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-paper">{r.reviewerName}</span>
+                    <span className="text-xs px-2 py-0.5 rounded" style={{ color: cfg.color, background: cfg.bg }}>
+                      {cfg.label}
                     </span>
-                  ) : (
-                    <span className="text-xs px-2 py-0.5 rounded" style={{ background: 'rgba(184,134,11,0.15)', color: 'var(--bronze-light)' }}>
-                      待评分
-                    </span>
-                  )}
-                </div>
-                {r.scored ? (
-                  <div className="flex items-center gap-3">
-                    <span className="text-bronze text-sm font-bold">{r.totalScore}/50</span>
-                    <span className="text-xs text-smoke-light">{new Date(r.reviewedAt).toLocaleDateString('zh-CN')}</span>
                   </div>
-                ) : (
-                  <span className="text-smoke-light text-sm">未评分</span>
-                )}
-              </div>
-            ))}
-            <div className="flex items-center gap-2 pt-2 text-sm">
-              <span className="text-smoke-light">已评分：{scoredReviewers.length}/{versionReviews.length}</span>
-              <span className="text-smoke-light">｜</span>
-              <span className="text-smoke-light">平均分：{avgScore}</span>
+                  <div className="flex items-center gap-3">
+                    {!r.scoreCardIssued && !r.scored && (
+                      <button onClick={() => handleIssueCard(r.id)} className="text-xs px-2 py-1 rounded transition hover:opacity-80"
+                        style={{ color: 'var(--bronze)', border: '1px solid var(--bronze)', background: 'rgba(184,134,11,0.08)' }}>
+                        <Send size={10} className="inline mr-1" />发放评分卡
+                      </button>
+                    )}
+                    {r.scored ? (
+                      <>
+                        <span className="text-bronze text-sm font-bold">{r.totalScore}/50</span>
+                        <span className="text-xs text-smoke-light">{new Date(r.reviewedAt).toLocaleDateString('zh-CN')}</span>
+                      </>
+                    ) : (
+                      <span className="text-smoke-light text-sm">待回收</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            <div className="flex items-center gap-3 pt-2 text-sm">
+              <span style={{ color: 'var(--smoke-light)' }}>已邀请：{invitedCount}</span>
+              <span style={{ color: 'var(--bronze)' }}>已发放：{issuedCount}</span>
+              <span style={{ color: 'var(--bamboo-light)' }}>已评分：{scoredReviewers.length}</span>
+              <span style={{ color: 'var(--smoke-light)' }}>｜</span>
+              <span style={{ color: 'var(--smoke-light)' }}>平均分：{avgScore}</span>
             </div>
           </div>
         )}
@@ -215,11 +257,13 @@ ${DIMS.map(d => `<div class="dim"><span class="dim-name">${d.label}</span><span 
         {unscoredReviewers.length > 0 ? (
           <>
             <div>
-              <label className="text-sm mb-1 block text-smoke-light">选择评委</label>
+              <label className="text-sm mb-1 block text-smoke-light">选择评委（已发放评分卡的优先）</label>
               <select className="ink-input" value={selectedReviewerId} onChange={e => handleSelectReviewer(e.target.value)}>
                 <option value="">-- 请选择评委 --</option>
-                {unscoredReviewers.map(r => (
-                  <option key={r.id} value={r.id}>{r.reviewerName}</option>
+                {unscoredReviewers.sort((a, b) => (b.scoreCardIssued ? 1 : 0) - (a.scoreCardIssued ? 1 : 0)).map(r => (
+                  <option key={r.id} value={r.id}>
+                    {r.reviewerName}{r.scoreCardIssued ? ' [已发卡]' : ' [未发卡]'}
+                  </option>
                 ))}
               </select>
             </div>
@@ -257,13 +301,18 @@ ${DIMS.map(d => `<div class="dim"><span class="dim-name">${d.label}</span><span 
             {versionAvgHistory.map((vh, i) => {
               const prevAvg = i > 0 ? versionAvgHistory[i - 1].avg : null;
               const diff = vh.avg !== null && prevAvg !== null ? (vh.avg - prevAvg) : null;
+              const allVr = allVersionReviews.filter(r => r.recipeVersionId === recipeVersions.find(rv => rv.versionNumber === vh.version)?.id);
+              const vIssued = allVr.filter(r => r.scoreCardIssued && !r.scored).length;
+              const vInvited = allVr.filter(r => !r.scoreCardIssued && !r.scored).length;
               return (
                 <div key={vh.version} className="flex items-center gap-4 px-4 py-3 rounded" style={{ background: 'rgba(245,240,232,0.04)', border: '1px solid rgba(245,240,232,0.08)' }}>
                   <span className="font-calligraphy text-paper text-lg w-24">第{vh.version}版</span>
                   {vh.locked && <span className="text-xs px-2 py-0.5 rounded" style={{ color: 'var(--vermilion)', border: '1px solid var(--vermilion)' }}>🔒 锁定</span>}
                   <div className="flex-1">
-                    <div className="flex items-center gap-2 text-xs text-smoke-light">
-                      <span>评委 {vh.reviewerCount}/{vh.totalReviewers} 人已评分</span>
+                    <div className="flex items-center gap-2 text-xs">
+                      <span style={{ color: 'var(--smoke-light)' }}>已邀请 {vInvited}</span>
+                      <span style={{ color: 'var(--bronze)' }}>已发放 {vIssued}</span>
+                      <span style={{ color: 'var(--bamboo-light)' }}>已评分 {vh.reviewerCount}</span>
                     </div>
                     {vh.avg !== null && (
                       <div className="flex items-center gap-2 mt-1">
@@ -289,10 +338,13 @@ ${DIMS.map(d => `<div class="dim"><span class="dim-name">${d.label}</span><span 
 
       <section className="paper-card p-6 space-y-4">
         <h2 className="font-calligraphy text-xl text-paper flex items-center gap-2"><FileText size={20} /> 评分卡</h2>
-        <p className="text-sm text-smoke-light">生成可打印的评分卡，方便现场评委纸质填写或电子记录</p>
+        <p className="text-sm text-smoke-light">生成可打印的评分卡。导出后会自动将评分卡标记为已发放给所有未发卡评委。</p>
         <div className="flex gap-3">
           <button onClick={handleExportScoreCardHtml} className="ink-btn ink-btn-secondary">
             <Download size={14} /> 导出评分卡（可打印）
+          </button>
+          <button onClick={handleBatchIssueCards} className="ink-btn ink-btn-ghost">
+            <Send size={14} /> 批量发放
           </button>
           <button onClick={() => setScoreCardOpen(true)} className="ink-btn ink-btn-ghost">
             <FileText size={14} /> 预览评分卡
@@ -305,11 +357,11 @@ ${DIMS.map(d => `<div class="dim"><span class="dim-name">${d.label}</span><span 
         <div className="flex gap-4">
           <select className="ink-input flex-1" value={compareA} onChange={e => setCompareA(e.target.value)}>
             <option value="">选择版本 A</option>
-            {recipeVersions.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+            {recipeVersions.map(v => <option key={v.id} value={v.id}>{v.name}{v.locked ? ' 🔒' : ''}</option>)}
           </select>
           <select className="ink-input flex-1" value={compareB} onChange={e => setCompareB(e.target.value)}>
             <option value="">选择版本 B</option>
-            {recipeVersions.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+            {recipeVersions.map(v => <option key={v.id} value={v.id}>{v.name}{v.locked ? ' 🔒' : ''}</option>)}
           </select>
         </div>
         {verA && verB && (
@@ -319,7 +371,7 @@ ${DIMS.map(d => `<div class="dim"><span class="dim-name">${d.label}</span><span 
                 const rv = allVersionReviews.filter(r => r.recipeVersionId === v.id && r.scored);
                 return (
                   <div key={v.id} className="bg-paper/5 rounded p-4 space-y-1 text-sm">
-                    <p className="font-bold text-paper">{v.name}</p>
+                    <p className="font-bold text-paper">{v.name}{v.locked ? ' 🔒' : ''}</p>
                     <p className="text-smoke-light">步骤数: {v.steps.length}</p>
                     <p className="text-smoke-light">食材数: {v.ingredients.length}</p>
                     <p className="text-smoke-light">总时长: {v.steps.reduce((s, st) => s + st.durationMinutes, 0)} 分钟</p>

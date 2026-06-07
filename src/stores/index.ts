@@ -209,7 +209,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if (!currentVersion) return;
     const locked = { ...currentVersion, locked: true };
     await saveRecipeVersion(locked);
-    set({ currentVersion: locked });
+    set(state => ({
+      currentVersion: locked,
+      recipeVersions: state.recipeVersions.map(v => v.id === locked.id ? locked : v),
+    }));
   },
 
   loadTrials: async () => {

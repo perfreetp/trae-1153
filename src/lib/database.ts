@@ -140,3 +140,16 @@ export async function getArchive(projectId: string): Promise<Archive | undefined
 export async function saveArchive(archive: Archive): Promise<string> {
   return dbPut('archives', archive);
 }
+
+export async function deleteProjectData(projectId: string): Promise<void> {
+  const db = await getDB();
+  const tx = db.transaction(['materials', 'recipeVersions', 'trials', 'reviews', 'archives'], 'readwrite');
+  await Promise.all([
+    ...await tx.objectStore('materials').index('projectId').getAllKeys(projectId).then(keys => keys.map(k => tx.objectStore('materials').delete(k))),
+    ...await tx.objectStore('recipeVersions').index('projectId').getAllKeys(projectId).then(keys => keys.map(k => tx.objectStore('recipeVersions').delete(k))),
+    ...await tx.objectStore('trials').index('projectId').getAllKeys(projectId).then(keys => keys.map(k => tx.objectStore('trials').delete(k))),
+    ...await tx.objectStore('reviews').index('projectId').getAllKeys(projectId).then(keys => keys.map(k => tx.objectStore('reviews').delete(k))),
+    ...await tx.objectStore('archives').index('projectId').getAllKeys(projectId).then(keys => keys.map(k => tx.objectStore('archives').delete(k))),
+    tx.done,
+  ]);
+}
